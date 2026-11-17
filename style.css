@@ -818,7 +818,7 @@ main { flex: 1; overflow: hidden; position: relative; }
 .cc-name { font-size: 13.5px; font-weight: 800; color: var(--gold); }
 .cc-desc { font-size: 11px; color: var(--muted); line-height: 1.35; min-height: 44px; }
 .cc-odds { font-size: 10px; color: #8a7a68; }
-.chest-box { width: min(420px, 94vw); border: 2px solid var(--gold); gap: 10px; }
+.chest-box { width: min(468px, 96vw); border: 2px solid var(--gold); gap: 10px; }
 .chest-box h2 { margin: 0; font-size: 16px; color: var(--gold); text-align: center; }
 .chest-loot {
   display: flex; flex-direction: column; gap: 4px; align-items: center;
@@ -832,6 +832,70 @@ main { flex: 1; overflow: hidden; position: relative; }
 .cl-desc { font-size: 11px; color: var(--muted); text-align: center; font-style: italic; }
 .chest-gold { text-align: center; font-size: 12.5px; color: #ffd98a; }
 .chest-hint { text-align: center; font-size: 11px; color: var(--muted); }
+
+/* ================= РУЛЕТКА СУНДУКА ================= */
+.chest-reel-wrap {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border: 1.5px solid var(--line-soft);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #0f0c09, #1a1410);
+  padding: 8px 0;
+}
+.chest-reel {
+  display: flex;
+  gap: 8px;
+  will-change: transform;
+  padding-left: 0;
+}
+.reel-cell {
+  width: 96px; height: 96px;
+  flex: 0 0 96px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px;
+  background: radial-gradient(circle at 50% 38%, #2a2219, #12100c);
+  border: 1px solid #3a2f23;
+  border-radius: 6px;
+  transition: border-color .25s, box-shadow .25s, transform .25s;
+}
+.reel-cell canvas { display: block; }
+.reel-cell .rc-name {
+  font-size: 8px; color: #8a7a62; text-align: center;
+  max-width: 90px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 0 3px;
+}
+.reel-cell.win {
+  border-color: var(--gold);
+  box-shadow: 0 0 18px rgba(229,181,79,.55), inset 0 0 14px rgba(229,181,79,.18);
+  transform: scale(1.06);
+}
+.reel-cell.win .rc-name { color: var(--gold); }
+.chest-reel-marker {
+  position: absolute; left: 50%; top: 0; bottom: 0;
+  width: 2px; margin-left: -1px;
+  background: linear-gradient(180deg, transparent, var(--gold) 18%, var(--gold) 82%, transparent);
+  box-shadow: 0 0 10px rgba(229,181,79,.75);
+  pointer-events: none; z-index: 3;
+}
+.chest-reel-marker::before,
+.chest-reel-marker::after {
+  content: ''; position: absolute; left: 50%; margin-left: -6px;
+  border-left: 6px solid transparent; border-right: 6px solid transparent;
+}
+.chest-reel-marker::before { top: 0; border-top: 8px solid var(--gold); }
+.chest-reel-marker::after { bottom: 0; border-bottom: 8px solid var(--gold); }
+.chest-reel-fade {
+  position: absolute; top: 0; bottom: 0; width: 46px; z-index: 2; pointer-events: none;
+}
+.chest-reel-fade.left { left: 0; background: linear-gradient(90deg, #14100c 12%, rgba(20,16,12,0)); }
+.chest-reel-fade.right { right: 0; background: linear-gradient(270deg, #14100c 12%, rgba(20,16,12,0)); }
+.chest-result {
+  opacity: 0; transform: translateY(6px);
+  transition: opacity .35s ease, transform .35s ease;
+  display: flex; flex-direction: column; gap: 6px; width: 100%;
+}
+.chest-result.show { opacity: 1; transform: translateY(0); }
 
 /* ================= ХРАМ: КОНЕЧНОСТИ ================= */
 .temple-list { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
@@ -877,6 +941,80 @@ main { flex: 1; overflow: hidden; position: relative; }
   margin-bottom: 10px; flex-shrink: 0;
 }
 .training-stage canvas { display: block; width: 100%; height: auto; }
+
+/* ---------- Тренировка: ритм-мини-игра ---------- */
+.train-game {
+  background: linear-gradient(180deg, #1b2129, #14181e);
+  border: 1.5px solid rgba(127,154,209,.45); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 10px; flex-shrink: 0;
+}
+.tg-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.tg-name { font-size: 13px; font-weight: 900; color: #cfe0f5; }
+.tg-prog { font-size: 11px; color: #9db4dd; font-variant-numeric: tabular-nums; }
+.tg-bar { height: 9px; background: #0c0f13; border-radius: 5px; overflow: hidden; border: 1px solid rgba(127,154,209,.3); }
+.tg-bar i { display: block; height: 100%; background: linear-gradient(90deg, #4a6a9a, #7f9ad1, #a8c8f0); transition: width .25s ease-out; }
+.tg-pads { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 8px; }
+.tg-pad {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 9px 4px; border-radius: 9px; cursor: pointer;
+  background: #232b36; border: 1.5px solid #3a4655; color: #b8c8dd;
+  transition: transform .06s ease, background .12s ease, border-color .12s ease;
+}
+.tg-pad b { font-size: 17px; font-weight: 900; }
+.tg-pad span { font-size: 9px; letter-spacing: .06em; text-transform: uppercase; color: #7d8b9d; }
+.tg-pad:hover { background: #2b3542; border-color: #52627a; }
+.tg-pad:active, .tg-pad.hit { transform: scale(.96); background: #2f4a33; border-color: #6fae6a; color: #cdf5c2; }
+.tg-pad.miss { transform: scale(.96); background: #4a2a26; border-color: #c05a4a; color: #ffc4b8; }
+.tg-stats { display: flex; gap: 14px; font-size: 10.5px; color: #8a9ab0; }
+.tg-stats b { color: #dce8f8; }
+.tr-btns { display: flex; gap: 5px; margin-top: 3px; }
+.tr-btns .mini-btn { padding: 3px 8px; font-size: 10px; }
+
+/* ================= ПРОМЫСЕЛ: РЫБАЛКА И ОХОТА ================= */
+.work-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; flex-shrink: 0; }
+.work-tab {
+  display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto;
+  gap: 1px 9px; align-items: center; text-align: left; cursor: pointer;
+  padding: 9px 12px; border-radius: 10px;
+  background: #1c1612; border: 1.5px solid var(--line-soft); color: var(--text);
+}
+.work-tab.on { border-color: #5f9ec4; background: #16202a; }
+.work-tab .wt-ico { grid-row: 1 / span 2; font-size: 22px; }
+.work-tab .wt-name { font-size: 12.5px; font-weight: 900; }
+.work-tab .wt-sub { grid-column: 2; font-size: 10.5px; color: var(--muted); }
+.work-tab .wt-pay { grid-column: 2; font-size: 10.5px; color: var(--gold); font-weight: 800; }
+.work-stage {
+  width: 100%; border-radius: 10px; overflow: hidden;
+  border: 1.5px solid var(--line-soft); background: #0e1418;
+  margin-bottom: 10px; flex-shrink: 0;
+}
+.work-stage canvas { display: block; width: 100%; height: auto; }
+.work-status { font-size: 12px; color: #d9cdb6; min-height: 18px; margin-bottom: 8px; }
+.work-hint { font-size: 10.5px; color: var(--muted); margin-top: 7px; text-align: center; }
+
+/* ================= КОСМЕТИКА ЗА СЛАВУ ================= */
+.cosmetics-list { display: grid; grid-template-columns: 240px 1fr; gap: 14px; align-items: start; }
+.cos-bust {
+  background: #171210; border: 1.5px solid var(--line-soft); border-radius: 10px;
+  padding: 8px; text-align: center; position: sticky; top: 8px;
+}
+.cos-bust canvas { display: block; width: 100%; height: auto; border-radius: 7px; }
+.cos-name { font-size: 12.5px; font-weight: 900; margin-top: 6px; }
+.cos-fame { font-size: 11px; color: var(--gold); font-weight: 800; }
+.cos-groups { display: flex; flex-direction: column; gap: 12px; }
+.cos-group-title { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.cos-options { display: flex; flex-wrap: wrap; gap: 7px; }
+.cos-opt {
+  display: flex; flex-direction: column; gap: 2px; align-items: flex-start;
+  padding: 7px 12px; border-radius: 9px; cursor: pointer; text-align: left;
+  background: #1c1612; border: 1.5px solid var(--line-soft); color: var(--text);
+}
+.cos-opt .co-name { font-size: 12px; font-weight: 700; }
+.cos-opt .co-price { font-size: 10.5px; color: var(--gold); font-weight: 800; }
+.cos-opt .co-own { font-size: 10px; color: #8a7a68; }
+.cos-opt .co-on { font-size: 10px; color: #8fd39a; font-weight: 800; }
+.cos-opt.locked { border-style: dashed; }
+.cos-opt.active { border-color: var(--gold); background: #241c12; box-shadow: inset 0 0 0 1px rgba(229,181,79,.25); }
 
 /* ================= АРЕНА: СЛОЖНОСТЬ + БОСС ================= */
 .boss-card {

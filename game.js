@@ -1,4 +1,4 @@
-// ==================== СОСТОЯНИЕ ====================
+﻿// ==================== СОСТОЯНИЕ ====================
 const STATE = {
   slot: 0,              // активный слот сохранения (1..5), 0 — ещё не выбран
   gold: 420,
@@ -34,7 +34,8 @@ const MAX_ROSTER = 12;   // владеть можно 12 гладиаторам�
 const MAX_DOGS = 3;
 const MAX_SQUAD = 3;     // но на песок выходят только трое
 const TRAINING_COST = 55;
-const TRAINING_MS = 3 * 60 * 1000;  // 3 минуты реальной тренировки до уровня
+// Тренировка — ритм-мини-игра: 30 секунд чистого ритма на 1-й уровень,
+// каждый следующий уровень требует на 5 секунд больше (см. trainingNeedMs).
 const KENNEL_REFRESH_COST = 40;
 const RECRUIT_REFRESH_COST = 45;
 
@@ -142,21 +143,7 @@ function equipRecruitByRole(rec, role) {
   add('body', 'b_tunic');
   add('legs', 'l_sandals');
 
-  // Сначала пробуем классовое снаряжение — оно и есть смысл класса
-  if (rec.cls) {
-    const gear = (typeof classItems === 'function' ? classItems(rec.cls) : [])
-      .filter(i => i.tier <= 2)
-      .sort((a, b) => b.tier - a.tier);
-    const wpn = gear.find(i => i.slot === 'weapon' && !i.offhandOnly);
-    // В левой руке — щит или (у димахера) второй клинок
-    const shield = gear.find(i => i.slot === 'offhand' || i.offhandOnly);
-    if (wpn) rec.equip.weapon = { ...wpn, uid: 'r_' + Math.random().toString(36).substr(2, 8) };
-    if (shield && !wpn?.twoHanded && (shield.slot === 'weapon' ? canOffhandWeapon(rec, shield) : classAllowsShield(rec))) {
-      rec.equip.offhand = { ...shield, uid: 'r_' + Math.random().toString(36).substr(2, 8) };
-    }
-    if (wpn) return;
-  }
-
+  // Снаряжение универсальное: наёмник получает простое оружие по своей роли
   if (role === 'ranged') add('weapon', 'w_shortbow');
   else if (role === 'shield') { add('weapon', 'w_rusty'); add('offhand', 'o_buckler'); }
   else add('weapon', Math.random() < 0.5 ? 'w_hatchet' : 'w_rusty');
@@ -258,7 +245,8 @@ function goTo(loc) {
   if (el) el.classList.add('active');
 
   if (loc !== 'city') stopCityAnim();
-  if (loc !== 'training') stopTrainingAnim();
+  if (loc !== 'training') { stopTrainingAnim(); pauseTrainingGame(); }
+  if (loc !== 'fishing') stopWorkAnim();
   if (loc === 'city') renderCity();
   if (loc === 'barracks') { renderRoster(); renderGladCard(); renderInventory(); }
   if (loc === 'tavern') renderRecruits();
@@ -267,6 +255,8 @@ function goTo(loc) {
   if (loc === 'chests') renderChests();
   if (loc === 'temple') renderTemple();
   if (loc === 'training') renderTraining();
+  if (loc === 'fishing') renderWork();
+  if (loc === 'cosmetics') renderCosmetics();
   if (loc === 'arena') renderArenaScreen();
 }
 
@@ -283,6 +273,8 @@ function refreshCurrentScreen() {
   if (loc === 'chests') renderChests();
   if (loc === 'temple') renderTemple();
   if (loc === 'training') renderTraining();
+  if (loc === 'fishing') renderWork();
+  if (loc === 'cosmetics') renderCosmetics();
   if (loc === 'arena') renderArenaScreen();
   updateUI();
 }
@@ -1933,12 +1925,6 @@ function equipItemToSlot(uid, slot) {
     return;
   }
 
-  // Димахер щит не носит — только второй клинок
-  if (slot === 'offhand' && item.slot === 'offhand' && !classAllowsShield(glad)) {
-    sfx('error');
-    addToast('Димахер не носит щит: у него два клинка.');
-    return;
-  }
   if (slot === 'offhand' && item.slot === 'weapon' && !canOffhandWeapon(glad, item)) {
     sfx('error');
     addToast('Это оружие занимает обе руки — во вторую руку его не взять.');
@@ -2163,6 +2149,142 @@ function paintItemCanvases(root) {
   });
 }
 
+// ==================== ТУЛТИП ПРЕДМЕТА ====================
+// Подробная карточка при наведении: все характеристики, требования
+// к атрибутам и сравнение с тем, что уже надето.
+let tipEl = null;
+
+function ensureItemTip() {
+  if (tipEl && document.body.contains(tipEl)) return tipEl;
+  tipEl = document.getElementById('item-tip');
+  if (!tipEl) {
+    tipEl = document.createElement('div');
+    tipEl.id = 'item-tip';
+    tipEl.className = 'item-tip';
+    document.body.appendChild(tipEl);
+  }
+  return tipEl;
+}
+
+// Основная «сила» предмета — по ней сравниваем с надетым
+function itemPower(item) {
+  if (!item) return 0;
+  if (item.slot === 'weapon') return Math.round((item.dmgMin + item.dmgMax) / 2);
+  if (item.slot === 'offhand') return item.defBonus || 0;
+  return item.armor || 0;
+}
+
+function itemTooltipHTML(item, glad) {
+  const t = TIER_INFO[item.tier] || TIER_INFO[1];
+  const slotName = SLOT_NAMES[item.slot] || item.slot;
+  const rows = [];
+
+  if (item.slot === 'weapon') {
+    const avg = ((item.dmgMin + item.dmgMax) / 2).toFixed(1);
+    rows.push(`<div class="it-main">Урон <b>${item.dmgMin}–${item.dmgMax}</b> <span class="it-dim">(ср. ${avg})</span></div>`);
+    rows.push(`<div class="it-line">Дистанция <b>${item.range}</b> • ${item.apCost} ОД • бронебой <b>${Math.round(item.armorPen * 100)}%</b></div>`);
+    const extra = [];
+    if (item.weight != null) extra.push(`вес ${item.weight}`);
+    if (item.twoHanded) extra.push('двуручное');
+    else if (item.dualPair) extra.push('можно в левую руку');
+    if (extra.length) rows.push(`<div class="it-line it-dim">${extra.join(' • ')}</div>`);
+  } else if (item.slot === 'offhand') {
+    rows.push(`<div class="it-main">Защита <b>+${item.defBonus || 0}</b></div>`);
+    rows.push(`<div class="it-line">Прочность <b>${item.armor}</b>${item.emblem ? ` • герб: ${item.emblem}` : ''}</div>`);
+  } else {
+    rows.push(`<div class="it-main">Броня <b>+${item.armor}</b></div>`);
+    if (item.defBonus) rows.push(`<div class="it-line">Защита <b>+${item.defBonus}</b></div>`);
+  }
+
+  // Сравнение с надетым
+  const cur = glad && glad.equip ? glad.equip[item.slot] : null;
+  if (cur && cur.uid !== item.uid) {
+    const d = itemPower(item) - itemPower(cur);
+    const cls = d > 0 ? 'it-up' : d < 0 ? 'it-down' : 'it-dim';
+    const sign = d > 0 ? `+${d}` : `${d}`;
+    rows.push(`<div class="it-cmp">надето: ${cur.name} — <span class="${cls}">${sign}</span></div>`);
+  } else if (!cur) {
+    rows.push(`<div class="it-cmp it-dim">ячейка «${slotName}» пуста</div>`);
+  }
+
+  // Требования
+  if (item.req && Object.keys(item.req).length) {
+    const parts = Object.keys(item.req).map(k => {
+      const a = ATTRS.find(x => x.key === k);
+      const have = glad && glad.attrs ? (glad.attrs[k] || 0) : 0;
+      const bad = have < item.req[k];
+      return `<span class="${bad ? 'req-bad' : 'req-ok'}">${a ? a.icon : k}${item.req[k]}<span class="it-have">/${have}</span></span>`;
+    });
+    rows.push(`<div class="it-req-row">Требуется: ${parts.join(' ')}</div>`);
+  }
+
+  return `<div class="it-head">
+      <span class="it-name">${item.name}</span>
+      <span class="tier-badge" style="color:${t.color};border-color:${t.color}">${t.stars} ${t.name}</span>
+    </div>
+    <div class="it-slot">${slotName}</div>
+    ${rows.join('')}
+    <div class="it-desc">${item.desc || ''}</div>
+    <div class="it-price">Цена <b>${item.price}</b>з • продажа ${Math.floor(item.price * 0.45)}з</div>`;
+}
+
+function placeItemTip(ev) {
+  const el = ensureItemTip();
+  const pad = 14;
+  const w = el.offsetWidth || 260;
+  const h = el.offsetHeight || 180;
+  let x = ev.clientX + pad;
+  let y = ev.clientY + pad;
+  if (x + w > window.innerWidth - 8) x = ev.clientX - w - pad;
+  if (y + h > window.innerHeight - 8) y = Math.max(8, ev.clientY - h - pad);
+  el.style.left = Math.max(8, x) + 'px';
+  el.style.top = Math.max(8, y) + 'px';
+}
+
+function showItemTip(ev, uid) {
+  const item = STATE.inventory.find(i => i.uid === uid);
+  if (!item) return;
+  const el = ensureItemTip();
+  el.innerHTML = itemTooltipHTML(item, getSelectedGlad());
+  el.classList.add('show');
+  placeItemTip(ev);
+}
+
+function hideItemTip() {
+  const el = document.getElementById('item-tip');
+  if (el) el.classList.remove('show');
+}
+
+function bindItemTips(root) {
+  if (!root) return;
+  hideItemTip();
+  // Слушатели вешаем один раз на контейнер: innerHTML меняется,
+  // сам контейнер остаётся, поэтому повторно не подписываемся.
+  if (root.dataset.tipsBound === '1') return;
+  root.dataset.tipsBound = '1';
+  // Используем всплывающие mouseover/mousemove: они надёжно срабатывают
+  // и при движении по дочерним узлам (canvas, кнопки внутри карточки).
+  root.addEventListener('mouseover', ev => {
+    const node = ev.target.closest('.br-item[data-uid]');
+    if (!node) { hideItemTip(); return; }
+    if (node === bindItemTips._cur) { placeItemTip(ev); return; }
+    bindItemTips._cur = node;
+    showItemTip(ev, node.dataset.uid);
+  });
+  root.addEventListener('mousemove', ev => {
+    const node = ev.target.closest('.br-item[data-uid]');
+    if (node) placeItemTip(ev);
+  });
+  root.addEventListener('mouseleave', () => {
+    bindItemTips._cur = null;
+    hideItemTip();
+  });
+  root.addEventListener('dragstart', () => {
+    bindItemTips._cur = null;
+    hideItemTip();
+  });
+}
+
 function renderInventory() {
   const grid = document.getElementById('inventory-grid');
   if (!grid) return;
@@ -2188,8 +2310,8 @@ function renderInventory() {
       const bad = have < item.req[k];
       return `<span class="${bad ? 'req-bad' : 'req-ok'}">${a ? a.icon : k}${item.req[k]}</span>`;
     }).join(' ') : '';
-    return `<div class="br-item ${check.ok ? '' : 'locked'}" draggable="true"
-      ondragstart="startDragItem(event,'${item.uid}')" ondragend="this.classList.remove('dragging')"
+    return `<div class="br-item ${check.ok ? '' : 'locked'}" draggable="true" data-uid="${item.uid}"
+      ondragstart="startDragItem(event,'${item.uid}');hideItemTip()" ondragend="this.classList.remove('dragging')"
       onclick="equipItem('${item.uid}')" title="${item.name}">
     <div class="bi-icon">${itemIconCanvas(item, 44)}</div>
     <div class="bi-body">
@@ -2207,6 +2329,8 @@ function renderInventory() {
   </div>`;
   }).join('');
   paintItemCanvases(grid);
+  bindItemTips._cur = null;
+  bindItemTips(grid);
 }
 
 function equipItem(uid) {
@@ -2249,12 +2373,6 @@ function equipItem(uid) {
     if (glad.equip.weapon) STATE.inventory.push(glad.equip.weapon);
     glad.equip.weapon = item;
   } else if (item.slot === 'offhand') {
-    // Щит: димахер его не носит
-    if (!classAllowsShield(glad)) {
-      sfx('error');
-      addToast('Димахер не носит щит: у него два клинка.');
-      return;
-    }
     if (mainBoth) unequipItem('weapon');
     if (glad.equip.offhand) STATE.inventory.push(glad.equip.offhand);
     glad.equip.offhand = item;
@@ -2331,7 +2449,7 @@ function refreshRecruits(paid) {
       const offered = rollSkillChoices(rec);
       if (offered.length) rec.skills = [offered[0].id];
     }
-    // Полное классовое снаряжение до tier 3
+    // Полный универсальный комплект до tier 3
     equipPremiumRecruit(rec);
     rec.hp = rec.maxHp;
     rec.isPremium = true;
@@ -2344,47 +2462,22 @@ function refreshRecruits(paid) {
   renderRecruits();
 }
 
-// Экипировка премиум-наёмника: классовое снаряжение до tier 3
+// Экипировка премиум-наёмника: универсальное снаряжение до tier 3
 function equipPremiumRecruit(rec) {
   const add = (slot, id) => {
     const it = itemById(id);
     if (it) rec.equip[slot] = { ...it, uid: 'p_' + Math.random().toString(36).substr(2, 8) };
   };
-  add('body', 'b_tunic');
-  add('legs', 'l_sandals');
+  add('body', 'b_gambeson');
+  add('legs', 'l_greaves');
+  add('head', 'h_skullcap');
+  add('arms', 'a_bracers');
 
-  if (rec.cls) {
-    const gear = (typeof classItems === 'function' ? classItems(rec.cls) : [])
-      .filter(i => i.tier <= 3)
-      .sort((a, b) => b.tier - a.tier);
-    const wpn = gear.find(i => i.slot === 'weapon' && !i.offhandOnly);
-    // В левой руке — щит или второй клинок (димахер)
-    const shield = gear.find(i => i.slot === 'offhand' || i.offhandOnly);
-    const head = gear.find(i => i.slot === 'head');
-    const body = gear.find(i => i.slot === 'body');
-    const arms = gear.find(i => i.slot === 'arms');
-    const legs = gear.find(i => i.slot === 'legs');
-    if (wpn) rec.equip.weapon = { ...wpn, uid: 'p_' + Math.random().toString(36).substr(2, 8) };
-    if (shield && !wpn?.twoHanded && (shield.slot === 'weapon' ? canOffhandWeapon(rec, shield) : classAllowsShield(rec))) {
-      rec.equip.offhand = { ...shield, uid: 'p_' + Math.random().toString(36).substr(2, 8) };
-    }
-    if (head) rec.equip.head = { ...head, uid: 'p_' + Math.random().toString(36).substr(2, 8) };
-    if (body) rec.equip.body = { ...body, uid: 'p_' + Math.random().toString(36).substr(2, 8) };
-    if (arms) rec.equip.arms = { ...arms, uid: 'p_' + Math.random().toString(36).substr(2, 8) };
-    if (legs) rec.equip.legs = { ...legs, uid: 'p_' + Math.random().toString(36).substr(2, 8) };
-    if (wpn) return;
-  }
-
-  // Fallback
+  // Оружие по роли — универсальное, 2-го тира
   const role = rec.aiRole;
-  if (rec.cls === 'dimachaerus') {
-    add('weapon', 'w_dual_swords');
-    add('offhand', 'w_dual_swords');
-    return;
-  }
-  if (role === 'ranged') add('weapon', 'w_shortbow');
-  else if (role === 'shield') { add('weapon', 'w_gladius'); add('offhand', 'o_buckler'); }
-  else add('weapon', Math.random() < 0.5 ? 'w_gladius' : 'w_spear');
+  if (role === 'ranged') { add('weapon', 'w_hunting_bow'); return; }
+  if (role === 'shield') { add('weapon', 'w_gladius'); add('offhand', 'o_round'); return; }
+  add('weapon', Math.random() < 0.5 ? 'w_spatha' : 'w_waraxe');
 }
 
 // Характеристики с учётом снаряжения (для отображения)
@@ -2548,19 +2641,6 @@ function shopCat(cat) {
   renderMarket();
 }
 
-// Фильтр по происхождению снаряжения: всё / универсальное / классовое
-function setGearFilter(kind) {
-  STATE.gearFilter = kind === 'universal' || kind === 'class' ? kind : 'all';
-  sfx('click');
-  renderMarket();
-}
-
-const GEAR_FILTERS = [
-  { id: 'all',       name: 'всё',           icon: '📦' },
-  { id: 'universal', name: 'универсальное', icon: '🔧' },
-  { id: 'class',     name: 'классовое',     icon: '🏛️' }
-];
-
 // Карточка товара в кузнице
 function marketCard(item, payFame, g) {
   const reqTxt = item.req ? Object.keys(item.req).map(k => {
@@ -2572,14 +2652,12 @@ function marketCard(item, payFame, g) {
   const price = payFame ? (item.famePrice || 1) : item.price;
   const have = payFame ? (STATE.fame || 0) : (STATE.gold || 0);
   const canPay = have >= price;
-  const clsBadge = item.gearClass === 'class' ? '<span class="gear-class">классовое</span>' : '';
   return `<div class="item-card shop">
     <div class="ic-top">
       ${itemIconCanvas(item, 58)}
       <div class="ic-titles">
         <span class="ic-title">${item.name}</span>
         ${itemTierBadge(item)}
-        ${clsBadge}
       </div>
     </div>
     <div class="ic-stat">${itemStatLine(item)}${item.twoHanded ? ' • двуручное' : ''}</div>
@@ -2599,8 +2677,7 @@ function renderMarket() {
   const isWeapon = STATE.shopTab === 'weapon';
   const cats = isWeapon ? WEAPON_CATS : ARMOR_CATS;
   const activeCat = isWeapon ? STATE.shopCat : STATE.armorCat;
-  const payFame = STATE.payWith === 'fame';
-  const gearFilter = STATE.gearFilter || 'all';
+  const payFame = false;   // слава больше не покупает снаряжение
 
   if (catsEl) {
     catsEl.innerHTML = `
@@ -2610,72 +2687,36 @@ function renderMarket() {
       <div class="shop-cats">
         ${cats.map(c => `<button class="chip ${activeCat === c.id ? 'on' : ''}" onclick="shopCat('${c.id}')">${c.icon} ${c.name}</button>`).join('')}
       </div>
-      <div class="shop-cats gear-filter">
-        ${GEAR_FILTERS.map(f => `<button class="chip ${gearFilter === f.id ? 'on' : ''}" onclick="setGearFilter('${f.id}')">${f.icon} ${f.name}</button>`).join('')}
-      </div>
     `;
   }
   const goldEl = document.getElementById('market-fame');
   if (goldEl) goldEl.textContent = STATE.fame || 0;
-  const pg = document.getElementById('pay-gold');
-  const pf = document.getElementById('pay-fame');
-  if (pg) pg.classList.toggle('on', !payFame);
-  if (pf) pf.classList.toggle('on', payFame);
 
   const g = getSelectedGlad();
   let list = itemsByCat(activeCat).slice().sort((a, b) => a.tier - b.tier || a.price - b.price);
-  if (gearFilter !== 'all') list = list.filter(i => (i.gearClass || 'universal') === gearFilter);
 
-  // Группировка: универсальное снаряжение отдельно от классового —
-  // так проще найти вещи под конкретную школу арены.
-  const groups = [
-    { id: 'universal', title: '🔧 Универсальное снаряжение', note: 'Доступно любому бойцу', items: [] },
-    { id: 'class',     title: '🏛️ Классовое снаряжение',     note: 'Только для своего класса, но сильнее', items: [] }
-  ];
-  list.forEach(i => {
-    const key = (i.gearClass === 'class') ? 'class' : 'universal';
-    const grp = groups.find(x => x.id === key);
-    if (grp) grp.items.push(i);
-  });
-
-  const visible = groups.filter(grp => grp.items.length);
-  if (!visible.length) {
+  if (!list.length) {
     grid.innerHTML = `<div class="empty-hint">В этой категории пока нет снаряжения.</div>`;
     return;
   }
 
-  grid.innerHTML = visible.map(grp => `
-    <div class="gear-group">
-      <div class="gear-group-head">
-        <span class="gg-title">${grp.title}</span>
-        <span class="gg-note">${grp.note} • ${grp.items.length} шт.</span>
-      </div>
-      <div class="item-grid gear-group-grid">
-        ${grp.items.map(item => marketCard(item, payFame, g)).join('')}
-      </div>
-    </div>
-  `).join('');
+  grid.innerHTML = `<div class="item-grid">${list.map(item => marketCard(item, payFame, g)).join('')}</div>`;
   paintItemCanvases(grid);
 }
 
 function setPayWith(kind) {
-  STATE.payWith = kind === 'fame' ? 'fame' : 'gold';
-  sfx('click');
+  // Совместимость: выбор валюты убран, снаряжение только за золото
+  STATE.payWith = 'gold';
   renderMarket();
 }
 
 function buyItem(id) {
   const base = itemById(id);
   if (!base) return;
-  const payFame = STATE.payWith === 'fame';
-  const price = payFame ? (base.famePrice || 1) : base.price;
-  if (payFame) {
-    if ((STATE.fame || 0) < price) return alert('Недостаточно славы!');
-    STATE.fame -= price;
-  } else {
-    if (STATE.gold < price) return alert('Недостаточно золота!');
-    STATE.gold -= price;
-  }
+  // Снаряжение продаётся только за золото: слава — валюта внешности
+  const price = base.price;
+  if (STATE.gold < price) return alert('Недостаточно золота!');
+  STATE.gold -= price;
   STATE.inventory.push({ ...base, uid: 'i_' + Math.random().toString(36).substr(2, 9) });
   sfx('coin');
   updateUI();
@@ -2683,16 +2724,122 @@ function buyItem(id) {
   addToast(`Куплено: ${base.name}`);
 }
 
+// ==================== КОСМЕТИКА ====================
+function renderCosmetics() {
+  const el = document.getElementById('cosmetics-list');
+  if (!el) return;
+  const fameEl = document.getElementById('cosmetics-fame');
+  if (fameEl) fameEl.textContent = STATE.fame || 0;
+
+  const g = getSelectedGlad();
+  if (!g) {
+    el.innerHTML = `<div class="empty-hint">Сначала наймите бойца — менять внешность некого.</div>`;
+    return;
+  }
+
+  const cur = g.cosmetic || {};
+  const groups = [];
+  COSMETICS.forEach(c => {
+    if (groups.indexOf(c.group) < 0) groups.push(c.group);
+  });
+
+  const bustBox = `<div class="cos-bust">
+      <canvas id="cosBustCanvas" width="260" height="320"></canvas>
+      <div class="cos-name">${g.name}</div>
+      <div class="cos-fame">🏆 ${STATE.fame || 0} славы</div>
+    </div>`;
+
+  const body = groups.map(group => {
+    const list = COSMETICS.filter(c => c.group === group);
+    const kind = list[0].kind;
+    return `<div class="cos-group">
+      <div class="cos-group-title">${group}</div>
+      <div class="cos-options">
+        ${list.map(c => {
+          const owned = cosmeticOwned(g, c);
+          const active = (cur[kind] || '') === c.value ||
+            (!cur[kind] && (c.value === 'normal' || c.value === 'short' || c.value === 'none'));
+          const priceTxt = owned ? '' : `<span class="co-price">🏆 ${c.fame}</span>`;
+          const cls = active ? 'active' : owned ? '' : 'locked';
+          return `<button class="cos-opt ${cls}" ${owned ? '' : `onclick="buyCosmetic('${c.id}')"`}>
+            <span class="co-name">${c.name}</span>
+            ${priceTxt || (active ? '<span class="co-on">надето</span>' : '<span class="co-own">есть</span>')}
+          </button>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = bustBox + `<div class="cos-groups">${body}</div>`;
+  drawCosmeticBust(g);
+}
+
+function drawCosmeticBust(g) {
+  const cv = document.getElementById('cosBustCanvas');
+  if (!cv || !g) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#2c2219');
+  bg.addColorStop(1, '#171210');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+  drawGladCentered(ctx, g, W, H, 1.55);
+}
+
+function buyCosmetic(id) {
+  const c = COSMETIC_BY_ID[id];
+  if (!c) return;
+  const g = getSelectedGlad();
+  if (!g) return alert('Выберите бойца.');
+  if (!g.cosmeticOwned) g.cosmeticOwned = [];
+  if (g.cosmeticOwned.indexOf(id) >= 0) return applyCosmetic(id);
+  if ((STATE.fame || 0) < c.fame) {
+    sfx('error');
+    return alert(`Нужно ${c.fame} славы. У вас ${STATE.fame || 0}.`);
+  }
+  STATE.fame -= c.fame;
+  g.cosmeticOwned.push(id);
+  applyCosmetic(id, true);
+  sfx('coin');
+  addToast(`Куплено: ${c.name} (−${c.fame} славы)`);
+}
+
+// Надеть купленную (или бесплатную) косметику
+function applyCosmetic(id, silent) {
+  const c = COSMETIC_BY_ID[id];
+  if (!c) return;
+  const g = getSelectedGlad();
+  if (!g) return;
+  if (!g.cosmetic) g.cosmetic = {};
+  if (!cosmeticOwned(g, c) && c.fame > 0) return buyCosmetic(id);
+
+  if (c.kind === 'build') g.build = c.value;
+  else if (c.kind === 'hair') g.hairStyle = c.value;
+  else if (c.kind === 'tattoo') g.tattoo = c.value;
+  else if (c.kind === 'paint') g.paint = c.value;
+  g.cosmetic[c.kind] = c.value;
+
+  sfx('click');
+  renderCosmetics();
+  renderGladCard();
+  renderRoster();
+  if (typeof Save !== 'undefined') Save.autosave();
+  if (!silent) addToast(`Внешность: ${c.name}`);
+}
+
 // ==================== ХРАМ ====================
 // Медикус лечит здоровье и покалеченные (но не отрубленные) конечности.
 // Отрубленное не возвращается никогда — это цена боя.
-function healCost(g) { return Math.max(10, Math.round((g.maxHp - g.hp) * 0.9)); }
+// Медикус берёт за лечение умеренно: восстановить тело после тяжёлого боя
+// дешевле, чем купить новое оружие.
+function healCost(g) { return Math.max(6, Math.round((g.maxHp - g.hp) * 0.42)); }
 
 function limbHealCost(g, limbId) {
   const s = g.limbs && g.limbs[limbId];
   if (!s || s.lost) return 0;
   const missing = Math.max(0, s.max - s.hp);
-  return missing <= 0 ? 0 : Math.max(8, Math.round(missing * 1.4));
+  return missing <= 0 ? 0 : Math.max(5, Math.round(missing * 0.65));
 }
 
 function renderTemple() {
@@ -2905,36 +3052,103 @@ function renderChests() {
   if (cg) cg.textContent = STATE.gold;
 }
 
+// Лента рулетки: приз ставим на фиксированную позицию, вокруг — случайные
+// предметы того же слота. Ближе к призу чаще попадаются вещи его тира —
+// так прокрутка «интригует» и не выглядит мусорной.
+function chestReelStrip(prize, count, prizeIdx) {
+  const pool = ITEMS_DB.filter(i => i.slot === prize.slot);
+  const near = pool.filter(i => Math.abs((i.tier || 1) - (prize.tier || 1)) <= 1);
+  const cells = [];
+  for (let i = 0; i < count; i++) {
+    if (i === prizeIdx) { cells.push(prize); continue; }
+    const dist = Math.abs(i - prizeIdx);
+    const useNear = near.length && dist <= 6 && Math.random() < 0.7;
+    const src = useNear ? near : (pool.length ? pool : ITEMS_DB);
+    cells.push(src[Math.floor(Math.random() * src.length)]);
+  }
+  return cells;
+}
+
 function openChest(id) {
   const chest = chestById(id);
   if (!chest) return;
   if (STATE.gold < chest.price) return alert('Недостаточно золота!');
   STATE.gold -= chest.price;
 
+  // Приз определяем сразу: анимация — только представление
   const res = rollChestLoot(chest);
   STATE.inventory.push(res.item);
   if (res.goldBack) STATE.gold += res.goldBack;
 
-  sfx(res.tier >= 4 ? 'levelup' : 'open');
   updateUI();
   renderChests();
+  if (typeof Save !== 'undefined') Save.autosave();
 
   const body = document.getElementById('chest-body');
   const modal = document.getElementById('chest-modal');
   if (!body || !modal) return;
+
+  const CELL = 96, GAP = 8, STEP = CELL + GAP;
+  const COUNT = 44, PRIZE_IDX = 38;
+  const cells = chestReelStrip(res.item, COUNT, PRIZE_IDX);
+
   body.innerHTML = `
     <h2>${chest.icon} ${chest.name}</h2>
-    <div class="chest-loot tier-${res.tier}">
-      <div class="cl-badge">${res.tier} тир</div>
-      <div class="cl-name">${res.item.name}</div>
-      <div class="cl-stat">${itemStatLine(res.item)}</div>
-      <div class="cl-desc">${res.item.desc || ''}</div>
+    <div class="chest-reel-wrap">
+      <div class="chest-reel-fade left"></div>
+      <div class="chest-reel-fade right"></div>
+      <div class="chest-reel-marker"></div>
+      <div class="chest-reel" id="chest-reel">
+        ${cells.map(it => `<div class="reel-cell">${itemIconCanvas(it, 52)}<span class="rc-name">${it.name}</span></div>`).join('')}
+      </div>
     </div>
-    ${res.goldBack ? `<div class="chest-gold">💰 Внутри завалялось ${res.goldBack} золота</div>` : ''}
-    <div class="chest-hint">${res.tier <= 2 ? 'Хлам. Но и такое пригодится.' : 'Неплохая находка!'}</div>
+    <div id="chest-result" class="chest-result">
+      <div class="chest-loot tier-${res.tier}">
+        <div class="cl-badge">${res.tier} тир</div>
+        <div class="cl-name">${res.item.name}</div>
+        <div class="cl-stat">${itemStatLine(res.item)}</div>
+        <div class="cl-desc">${res.item.desc || ''}</div>
+      </div>
+      ${res.goldBack ? `<div class="chest-gold">💰 Внутри завалялось ${res.goldBack} золота</div>` : ''}
+      <div class="chest-hint">${res.tier <= 2 ? 'Хлам. Но и такое пригодится.' : 'Неплохая находка!'}</div>
+    </div>
   `;
+  paintItemCanvases(body);
   modal.style.display = 'flex';
-  if (typeof Save !== 'undefined') Save.autosave();
+
+  const reel = document.getElementById('chest-reel');
+  const wrap = body.querySelector('.chest-reel-wrap');
+  if (!reel || !wrap) return;
+
+  let revealed = false;
+  const reveal = () => {
+    if (revealed) return;
+    revealed = true;
+    const cellEl = reel.children[PRIZE_IDX];
+    if (cellEl) cellEl.classList.add('win');
+    sfx(res.tier >= 4 ? 'levelup' : 'open');
+    const out = document.getElementById('chest-result');
+    if (out) out.classList.add('show');
+  };
+
+  // Ставим ленту в старт, затем одним переходом раскручиваем до приза
+  reel.style.transition = 'none';
+  reel.style.transform = 'translateX(0px)';
+  const w = wrap.clientWidth || 360;
+  const center = w / 2 - CELL / 2;
+  const jitter = (Math.random() - 0.5) * CELL * 0.4;
+  const target = -(PRIZE_IDX * STEP) + center + jitter;
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      reel.style.transition = 'transform 3.4s cubic-bezier(.12,.62,.06,1)';
+      reel.style.transform = `translateX(${target}px)`;
+    });
+  });
+
+  reel.addEventListener('transitionend', reveal, { once: true });
+  // Страховка: если вкладка была в фоне и transitionend не пришёл
+  setTimeout(reveal, 3800);
 }
 
 function closeChestModal() {
@@ -2990,27 +3204,59 @@ function closeBeerModal() {
   if (m) m.style.display = 'none';
 }
 
-// ==================== ТРЕНИРОВКА: СЦЕНА ====================
+// ==================== ТРЕНИРОВКА: РИТМ-МИНИ-ИГРА ====================
+// Тренировка больше не «ждёт таймер». Боец работает в ритм: на экране
+// четыре дорожки, метки бегут к линии удара. Нажимайте нужную клавишу
+// (A S D F) или кнопку в момент удара — каждый точный удар добавляет
+// один такт к прогрессу. Промах и пропуск сбрасывают серию и отнимают такт.
+// Первый уровень — 2 минуты чистого ритма, каждый следующий — на минуту больше.
 let trainingRaf = null;
 let trainingTs = 0;
-let trainingShots = [];
-let trainingArrows = 0;
 
-// ==================== ТРЕНИРОВКА ВО ДВОРЕ ====================
-// Тренировка не выдаёт опыт мгновенно: боец реально работает на площадке
-// 3 минуты и только потом получает уровень. Пока он тренируется,
-// его нельзя вести на арену.
+const TRAIN_KEYS = [
+  { code: 'KeyA', key: 'A', lane: 0 },
+  { code: 'KeyS', key: 'S', lane: 1 },
+  { code: 'KeyD', key: 'D', lane: 2 },
+  { code: 'KeyF', key: 'F', lane: 3 }
+];
+const TRAIN_BASE_MS = 30 * 1000;       // 1-й уровень — 30 секунд чистого ритма
+const TRAIN_STEP_MS = 5 * 1000;        // +5 секунд за каждый следующий уровень
+const TRAIN_BEAT_MS = 620;             // длительность такта
+const TRAIN_WINDOW_MS = 190;           // окно попадания до/после линии удара
 
+function trainingNeedMs(level) {
+  return TRAIN_BASE_MS + Math.max(0, (level || 1) - 1) * TRAIN_STEP_MS;
+}
+
+function trainState(id) {
+  return (STATE.training || {})[id] || null;
+}
+
+// Тренировка идёт по часам: время течёт само, а попадания лишь
+// определяют, засчитают уровень или нет (нужно ≥60% точных ударов).
 function trainProgress(id) {
-  const t = (STATE.training || {})[id];
+  const t = trainState(id);
   if (!t) return null;
-  return clamp01((Date.now() - t.start) / t.dur);
+  return clamp01((t.elapsed || 0) / Math.max(1, t.need));
 }
 
 function trainRemaining(id) {
-  const t = (STATE.training || {})[id];
+  const t = trainState(id);
   if (!t) return null;
-  return Math.max(0, t.dur - (Date.now() - t.start));
+  return Math.max(0, t.need - (t.elapsed || 0));
+}
+
+// Доля точных ударов от всех тактов
+function trainAccuracy(id) {
+  const t = trainState(id);
+  if (!t || !t.beats) return 1;
+  return (t.hits || 0) / t.beats;
+}
+
+const TRAIN_PASS_RATE = 0.6;   // минимум 60% попаданий для зачёта
+
+function isTraining(id) {
+  return !!trainState(id);
 }
 
 function fmtTime(ms) {
@@ -3019,38 +3265,55 @@ function fmtTime(ms) {
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function isTraining(id) {
-  return !!(STATE.training && STATE.training[id]);
-}
+// Состояние текущей мини-игры. В сейв не попадает: незавершённая
+// тренировка после загрузки просто ждёт, пока её продолжат.
+const TRAIN_GAME = {
+  id: null,
+  running: false,
+  lane: 0,
+  beat: 0,
+  beatStart: 0,
+  nextBeatAt: 0,
+  combo: 0,
+  best: 0,
+  hits: 0,
+  misses: 0,
+  flash: 0,
+  laneFlash: [0, 0, 0, 0],
+  raf: null,
+  lastTs: 0
+};
 
-// Завершение тренировки: выдаём уровень и очки характеристик
+// Завершение тренировки по времени: уровень засчитывается только при
+// точности не ниже 60%. Иначе время потрачено, но опыта не будет.
 function finishTraining(id) {
   const g = STATE.roster.find(x => x.id === id);
   if (!STATE.training) STATE.training = {};
+  const t = STATE.training[id];
+  const acc = t && t.beats ? (t.hits || 0) / t.beats : 0;
   delete STATE.training[id];
+  if (TRAIN_GAME.id === id) stopTrainingGame(true);
   if (!g) return;
+  if (acc < TRAIN_PASS_RATE) {
+    sfx('error');
+    addToast(`❌ ${g.name}: точность ${Math.round(acc * 100)}% — нужно ${Math.round(TRAIN_PASS_RATE * 100)}%. Уровень не засчитан.`);
+    updateUI();
+    renderTraining();
+    if (typeof Save !== 'undefined') Save.autosave();
+    return;
+  }
   const need = Math.max(0, xpToNext(g.level) - g.xp);
   g.xp += need;
   const ups = applyLevelUps(g);
   sfx('levelup');
-  addToast(`🎉 ${g.name} завершает тренировку — уровень ${g.level}! +${ups * 2} очк.`);
+  addToast(`🎉 ${g.name} завершает тренировку — уровень ${g.level}! +${ups * 2} очк. (точность ${Math.round(acc * 100)}%)`);
   updateUI();
   renderTraining();
   if (typeof Save !== 'undefined') Save.autosave();
 }
 
-// Проверяем завершённые тренировки (вызывается из renderTraining и таймера)
-function checkTrainings() {
-  if (!STATE.training) return false;
-  let changed = false;
-  Object.keys(STATE.training).forEach(id => {
-    if (trainProgress(id) >= 1) {
-      finishTraining(id);
-      changed = true;
-    }
-  });
-  return changed;
-}
+// Совместимость со старыми вызовами: тренировки больше не идут по часам
+function checkTrainings() { return false; }
 
 function renderTraining() {
   const el = document.getElementById('training-list');
@@ -3060,26 +3323,34 @@ function renderTraining() {
     stopTrainingAnim();
     return;
   }
-  checkTrainings();
 
   el.innerHTML = STATE.roster.map(g => {
     const need = xpToNext(g.level);
     const xpPct = Math.min(100, (g.xp / need) * 100);
-    const busy = isTraining(g.id);
+    const t = trainState(g.id);
+    const busy = !!t;
     const prog = busy ? trainProgress(g.id) : 0;
     const left = busy ? trainRemaining(g.id) : 0;
 
-    const action = busy
-      ? `<div class="tr-training">
+    let action;
+    if (busy) {
+      const active = TRAIN_GAME.id === g.id && TRAIN_GAME.running;
+      action = `<div class="tr-training">
            <div class="tr-train-bar"><i style="width:${Math.round(prog * 100)}%"></i></div>
-           <span class="tr-train-lbl">⏳ тренируется • ${fmtTime(left)}</span>
-         </div>`
-      : `<button class="mini-btn primary" onclick="trainGlad('${g.id}')">Тренировать • ${TRAINING_COST}з</button>`;
+           <span class="tr-train-lbl">🥁 ${fmtTime(left)} ритма • ${Math.round(prog * 100)}%</span>
+           <div class="tr-btns">
+             <button class="mini-btn ${active ? '' : 'primary'}" onclick="startTrainingGame('${g.id}')">${active ? 'идёт' : 'Продолжить'}</button>
+             <button class="mini-btn" onclick="cancelTraining('${g.id}')">Прервать</button>
+           </div>
+         </div>`;
+    } else {
+      action = `<button class="mini-btn primary" onclick="trainGlad('${g.id}')">Тренировать • ${TRAINING_COST}з</button>`;
+    }
 
     return `<div class="train-row ${busy ? 'busy' : ''}">
       <div class="tr-info">
         <span class="tr-name">${g.name}</span>
-        <span class="tr-hp">ур. ${g.level} • опыт ${g.xp}/${need}</span>
+        <span class="tr-hp">ур. ${g.level} • опыт ${g.xp}/${need} • норма ${fmtTime(trainingNeedMs(g.level))}</span>
       </div>
       <div class="tr-bar"><i style="width:${xpPct}%;background:#7f9ad1"></i></div>
       ${action}
@@ -3089,44 +3360,221 @@ function renderTraining() {
   const tg = document.getElementById('training-gold');
   if (tg) tg.textContent = STATE.gold;
   startTrainingAnim();
-  startTrainTicker();
+  renderTrainGamePanel();
 }
 
-// Тикер: раз в секунду обновляет таймеры тренировок
-let trainTicker = null;
-function startTrainTicker() {
-  if (trainTicker) return;
-  trainTicker = setInterval(() => {
-    if (STATE.currentLocation !== 'training') {
-      clearInterval(trainTicker);
-      trainTicker = null;
-      return;
-    }
-    if (checkTrainings()) return;
-    // Обновляем только подписи таймеров, чтобы не дёргать весь список
-    document.querySelectorAll('.tr-training').forEach((el, i) => {
-      const row = el.closest('.train-row');
-      const name = row && row.querySelector('.tr-name');
-      const g = STATE.roster.find(x => name && x.name === name.textContent);
-      if (!g) return;
-      const p = trainProgress(g.id);
-      if (p == null) return;
-      const bar = el.querySelector('.tr-train-bar i');
-      const lbl = el.querySelector('.tr-train-lbl');
-      if (bar) bar.style.width = Math.round(p * 100) + '%';
-      if (lbl) lbl.textContent = `⏳ тренируется • ${fmtTime(trainRemaining(g.id))}`;
-    });
-  }, 1000);
+// ---------- панель мини-игры ----------
+function renderTrainGamePanel() {
+  const box = document.getElementById('train-game');
+  if (!box) return;
+  if (!TRAIN_GAME.id || !trainState(TRAIN_GAME.id)) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  const g = STATE.roster.find(x => x.id === TRAIN_GAME.id);
+  const prog = trainProgress(TRAIN_GAME.id) || 0;
+  const acc = trainAccuracy(TRAIN_GAME.id);
+  box.style.display = 'block';
+  box.innerHTML = `
+    <div class="tg-head">
+      <span class="tg-name">🥁 ${g ? g.name : 'Боец'}</span>
+      <span class="tg-prog">осталось <b id="tg-time">${fmtTime(trainRemaining(TRAIN_GAME.id))}</b></span>
+    </div>
+    <div class="tg-bar"><i id="tg-bar-fill" style="width:${Math.round(prog * 100)}%"></i></div>
+    <div class="tg-pads">
+      ${TRAIN_KEYS.map(k => `<button class="tg-pad" data-lane="${k.lane}" onclick="trainHitLane(${k.lane})">
+        <b>${k.key}</b><span>удар</span>
+      </button>`).join('')}
+    </div>
+    <div class="tg-stats">
+      <span>точность: <b id="tg-acc" style="color:${acc >= TRAIN_PASS_RATE ? '#a8e0a0' : '#ffb0a0'}">${Math.round(acc * 100)}%</b> <small>(нужно ${Math.round(TRAIN_PASS_RATE * 100)}%)</small></span>
+      <span>серия: <b id="tg-combo">${TRAIN_GAME.combo}</b></span>
+      <span>промахов: <b id="tg-miss">${TRAIN_GAME.misses}</b></span>
+    </div>
+  `;
 }
 
+function trainPadFlash(lane, kind) {
+  const pads = document.querySelectorAll('#train-game .tg-pad');
+  const pad = pads[lane];
+  if (!pad) return;
+  pad.classList.remove('hit', 'miss');
+  void pad.offsetWidth;
+  pad.classList.add(kind);
+}
+
+// ---------- запуск / остановка ----------
+function startTrainingGame(id) {
+  const t = trainState(id);
+  if (!t) return;
+  if (TRAIN_GAME.id && TRAIN_GAME.id !== id) {
+    // Одновременно работает только один боец
+    stopTrainingGame();
+  }
+  TRAIN_GAME.id = id;
+  TRAIN_GAME.running = true;
+  TRAIN_GAME.lane = Math.floor(Math.random() * TRAIN_KEYS.length);
+  TRAIN_GAME.beat = 0;
+  TRAIN_GAME.nextBeatAt = 0;
+  TRAIN_GAME.lastTs = 0;
+  TRAIN_GAME.combo = 0;
+  TRAIN_GAME.best = 0;
+  TRAIN_GAME.misses = 0;
+  TRAIN_GAME.beatResolved = false;
+  renderTrainGamePanel();
+  startTrainingAnim();
+  addToast('Ритм пошёл. Бейте в такт!');
+}
+
+function stopTrainingGame(silent) {
+  TRAIN_GAME.running = false;
+  TRAIN_GAME.id = null;
+  TRAIN_GAME.combo = 0;
+  renderTrainGamePanel();
+  if (!silent) renderTraining();
+}
+
+// Уход с экрана: ритм замирает, набранный прогресс остаётся в сейве
+function pauseTrainingGame() {
+  if (!TRAIN_GAME.running) return;
+  TRAIN_GAME.running = false;
+  TRAIN_GAME.combo = 0;
+  if (typeof Save !== 'undefined') Save.autosave();
+}
+
+function cancelTraining(id) {
+  const t = trainState(id);
+  if (!t) return;
+  if (!confirm('Прервать тренировку? Заплаченные деньги не вернутся.')) return;
+  if (!STATE.training) STATE.training = {};
+  delete STATE.training[id];
+  if (TRAIN_GAME.id === id) stopTrainingGame(true);
+  sfx('error');
+  renderTraining();
+  addToast('Тренировка прервана.');
+  if (typeof Save !== 'undefined') Save.autosave();
+}
+
+// ---------- ритм ----------
+function trainBeatStep(now) {
+  const g = TRAIN_GAME;
+  const t = trainState(g.id);
+  if (!t) { stopTrainingGame(true); return; }
+  g.nextBeatAt = now + TRAIN_BEAT_MS;
+  g.beatResolved = false;
+  // Паттерн: иногда та же дорожка, иногда соседняя — так живее
+  if (g.beat > 0 && Math.random() < 0.35) {
+    g.lane = (g.lane + (Math.random() < 0.5 ? 1 : -1) + 4) % 4;
+  } else {
+    g.lane = Math.floor(Math.random() * 4);
+  }
+  g.beat++;
+  // Музыка: сильная доля каждые четыре такта
+  try {
+    if (g.beat % 4 === 1) sfx('beatStrong'); else sfx('beat');
+    sfx('melody' + (g.lane + 1));
+  } catch (e) {}
+}
+
+// Нажатие: клавиша или кнопка. Возвращает true при точном ударе.
+function trainHitLane(lane) {
+  const g = TRAIN_GAME;
+  if (!g.running || !g.id) return false;
+  const t = trainState(g.id);
+  if (!t) return false;
+  const now = performance.now();
+  const until = Math.abs(g.nextBeatAt - now);
+  const good = lane === g.lane && until <= TRAIN_WINDOW_MS;
+  if (!g.beatResolved) {
+    t.beats = (t.beats || 0) + 1;
+    if (good) t.hits = (t.hits || 0) + 1;
+    g.beatResolved = true;
+  }
+  if (good) {
+    g.combo++;
+    g.best = Math.max(g.best, g.combo);
+    g.flash = 1;
+    g.laneFlash[lane] = 1;
+    sfx('rhythmHit');
+    trainPadFlash(lane, 'hit');
+    // Такт закрыт — сразу выдаём следующий, чтобы не было двойных попаданий
+    trainBeatStep(now);
+  } else {
+    g.misses++;
+    g.combo = 0;
+    sfx('rhythmMiss');
+    trainPadFlash(lane, 'miss');
+  }
+  updateTrainStats();
+  return good;
+}
+
+// Пропуск ноты: время такта истекло, а удара не было
+function trainMissBeat() {
+  const g = TRAIN_GAME;
+  const t = trainState(g.id);
+  if (!t) { stopTrainingGame(true); return; }
+  if (!g.beatResolved) {
+    t.beats = (t.beats || 0) + 1;
+    g.beatResolved = true;
+  }
+  g.misses++;
+  g.combo = 0;
+  sfx('rhythmMiss');
+  updateTrainStats();
+}
+
+// Обновляем цифры панели: серия, лучшая, точность
+function updateTrainStats() {
+  const g = TRAIN_GAME;
+  const comboEl = document.getElementById('tg-combo');
+  const bestEl = document.getElementById('tg-best');
+  const accEl = document.getElementById('tg-acc');
+  const missEl = document.getElementById('tg-miss');
+  if (comboEl) comboEl.textContent = g.combo;
+  if (bestEl) bestEl.textContent = g.best;
+  if (missEl) missEl.textContent = g.misses;
+  if (accEl) {
+    const acc = g.id ? trainAccuracy(g.id) : 1;
+    accEl.textContent = Math.round(acc * 100) + '%';
+    accEl.style.color = acc >= TRAIN_PASS_RATE ? '#a8e0a0' : '#ffb0a0';
+  }
+}
+
+// Часы тренировки: идут сами, попадания лишь влияют на зачёт
+function updateTrainClock(dt) {
+  const g = TRAIN_GAME;
+  if (!g.running || !g.id) return;
+  const t = trainState(g.id);
+  if (!t) { stopTrainingGame(true); return; }
+  t.elapsed = Math.min(t.need, (t.elapsed || 0) + dt * 1000);
+  const timeEl = document.getElementById('tg-time');
+  if (timeEl) timeEl.textContent = fmtTime(trainRemaining(g.id));
+  const barEl = document.getElementById('tg-bar-fill');
+  if (barEl) barEl.style.width = Math.round((t.elapsed / t.need) * 100) + '%';
+  if (t.elapsed >= t.need) finishTraining(g.id);
+}
+
+// Клавиатура: A S D F во время мини-игры
+document.addEventListener('keydown', e => {
+  if (!TRAIN_GAME.running) return;
+  if (STATE.currentLocation !== 'training') return;
+  const k = TRAIN_KEYS.find(x => x.code === e.code);
+  if (!k) return;
+  e.preventDefault();
+  trainHitLane(k.lane);
+});
+
+// ---------- отрисовка ----------
 function startTrainingAnim() {
   if (trainingRaf) return;
   trainingTs = 0;
   const step = ts => {
-    if (STATE.currentLocation !== 'training') { trainingRaf = null; return; }
+    if (STATE.currentLocation !== 'training') { trainingRaf = null; trainingTs = 0; return; }
     const dt = trainingTs ? Math.min((ts - trainingTs) / 1000, 0.05) : 0.016;
     trainingTs = ts;
-    drawTrainingFrame(dt);
+    drawTrainingFrame(dt, ts);
     trainingRaf = requestAnimationFrame(step);
   };
   trainingRaf = requestAnimationFrame(step);
@@ -3138,12 +3586,25 @@ function stopTrainingAnim() {
   trainingTs = 0;
 }
 
-function drawTrainingFrame(dt) {
+function drawTrainingFrame(dt, ts) {
   const cv = document.getElementById('trainingCanvas');
   if (!cv) return;
   const ctx = cv.getContext('2d');
   const W = cv.width, H = cv.height;
   const t = performance.now() / 1000;
+  const g = TRAIN_GAME;
+
+  // Ритм: время тренировки течёт само, такты идут по метроному
+  if (g.running && g.id) {
+    const now = ts || performance.now();
+    updateTrainClock(dt);
+    if (!g.nextBeatAt) trainBeatStep(now);
+    else if (now > g.nextBeatAt + TRAIN_WINDOW_MS + 60) {
+      // Ноту пропустили
+      trainMissBeat();
+      trainBeatStep(now);
+    }
+  }
 
   ctx.clearRect(0, 0, W, H);
 
@@ -3187,95 +3648,100 @@ function drawTrainingFrame(dt) {
 
   const groundY = H * 0.86;
 
-  // --- Мишень для стрельбы ---
-  const tx = W * 0.30;
-  const ty = H * 0.55;
-  ctx.strokeStyle = '#4a3520';
-  ctx.lineWidth = 5;
-  ctx.beginPath(); ctx.moveTo(tx, groundY); ctx.lineTo(tx, ty); ctx.stroke();
-  const rings = [['#e8e0d0', 42], ['#c0392b', 33], ['#e8e0d0', 24], ['#c0392b', 15], ['#e5b54f', 6]];
-  rings.forEach(([col, r]) => {
-    ctx.fillStyle = col;
-    ctx.beginPath(); ctx.arc(tx, ty, r, 0, Math.PI * 2); ctx.fill();
-  });
-
-  // --- Пугало для ударов ---
-  const sx = W * 0.68;
-  const sy = groundY;
-  ctx.strokeStyle = '#5a4128';
-  ctx.lineWidth = 7;
-  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx, sy - H * 0.34); ctx.stroke();
-  ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.moveTo(sx - 40, sy - H * 0.26); ctx.lineTo(sx + 40, sy - H * 0.26); ctx.stroke();
-  ctx.fillStyle = '#8a7a5a';
-  ctx.fillRect(sx - 22, sy - H * 0.40, 44, 54);
-  ctx.fillStyle = '#c9a45c';
-  ctx.beginPath(); ctx.arc(sx, sy - H * 0.42, 17, 0, Math.PI * 2); ctx.fill();
-
-  // --- Лучник: натягивает лук и стреляет ---
-  const archerX = W * 0.14;
-  const cycle = (t * 0.55) % 1;
-  const draw = Math.min(1, cycle * 3);
-  const released = cycle > 0.72;
-
-  ctx.save();
-  ctx.strokeStyle = '#3a2a18';
-  ctx.lineWidth = 3;
-  const bowAngle = -0.35 + draw * 0.2;
-  ctx.beginPath();
-  ctx.arc(archerX + 26, groundY - H * 0.30, 26, Math.PI * 0.62 + bowAngle, Math.PI * 1.38 + bowAngle);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(240,230,200,0.7)';
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  ctx.moveTo(archerX + 26 + Math.cos(Math.PI * 0.62 + bowAngle) * 26, groundY - H * 0.30 + Math.sin(Math.PI * 0.62 + bowAngle) * 26);
-  ctx.lineTo(archerX + 26 - draw * 16, groundY - H * 0.30);
-  ctx.lineTo(archerX + 26 + Math.cos(Math.PI * 1.38 + bowAngle) * 26, groundY - H * 0.30 + Math.sin(Math.PI * 1.38 + bowAngle) * 26);
-  ctx.stroke();
-  ctx.restore();
-
-  // Стрела в полёте
-  if (released && !trainingShots.length) {
-    trainingShots.push({ p: 0 });
-    trainingArrows++;
-  }
-  trainingShots.forEach(s => { s.p += dt * 1.5; });
-  trainingShots = trainingShots.filter(s => s.p < 1);
-  trainingShots.forEach(s => {
-    const x = archerX + 30 + (tx - archerX - 30) * s.p;
-    const y = groundY - H * 0.30 - Math.sin(s.p * Math.PI) * H * 0.04;
-    ctx.strokeStyle = '#e8dcc0';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 16, y + 1); ctx.stroke();
-  });
-
-  // --- Боец бьёт по пугалу ---
-  const hitter = STATE.roster[0];
-  if (hitter) {
-    const swingPhase = (t * 0.9) % 1;
-    const swing = Math.max(0, Math.sin(swingPhase * Math.PI * 2)) * (swingPhase > 0.3 ? 1 : 0);
-    drawBattleBrother(ctx, hitter, sx - 70, groundY, 0.95, 1, {
+  // --- Боец бьёт по щиту ---
+  const fighter = g.id ? STATE.roster.find(x => x.id === g.id) : STATE.roster[0];
+  const swingPhase = g.running ? (1 - Math.min(1, Math.abs(g.nextBeatAt - (ts || performance.now())) / TRAIN_BEAT_MS)) : (t * 0.9) % 1;
+  const swing = g.running ? Math.max(0, Math.sin(swingPhase * Math.PI)) : Math.max(0, Math.sin(((t * 0.9) % 1) * Math.PI * 2));
+  if (fighter) {
+    drawBattleBrother(ctx, fighter, W * 0.30, groundY, 1.05, 1, {
       walk: 0, swing, breath: 1.2, emotion: 'angry'
     });
-    if (swing > 0.9) {
-      ctx.fillStyle = 'rgba(255,230,160,0.85)';
-      for (let i = 0; i < 5; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const r = 6 + Math.random() * 16;
+  }
+
+  // Щит-мишень
+  const sx = W * 0.52;
+  const sy = groundY - H * 0.26;
+  ctx.fillStyle = '#6a4a2a';
+  ctx.beginPath(); ctx.ellipse(sx, sy, 46, 54, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#8a6a3a';
+  ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.ellipse(sx, sy, 40, 48, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#c9a45c';
+  ctx.beginPath(); ctx.arc(sx, sy, 12, 0, Math.PI * 2); ctx.fill();
+
+  // --- Дорожки ритма ---
+  const laneX0 = W * 0.60;
+  const laneW = W * 0.36;
+  const laneH = 26;
+  const laneGap = 12;
+  const top = H * 0.20;
+
+  ctx.textAlign = 'left';
+  for (let i = 0; i < 4; i++) {
+    const y = top + i * (laneH + laneGap);
+    const active = g.running && i === g.lane;
+    // Дорожка
+    ctx.fillStyle = active ? 'rgba(229,181,79,0.16)' : 'rgba(20,14,10,0.55)';
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(laneX0, y, laneW, laneH, 8) : ctx.rect(laneX0, y, laneW, laneH);
+    ctx.fill();
+    ctx.strokeStyle = active ? 'rgba(229,181,79,0.6)' : 'rgba(120,100,74,0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Клавиша слева
+    ctx.fillStyle = active ? '#e5b54f' : '#8a7a68';
+    ctx.font = 'bold 15px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(TRAIN_KEYS[i].key, laneX0 - 18, y + laneH * 0.68);
+
+    // Линия удара
+    const hitX = laneX0 + laneW - 26;
+    ctx.strokeStyle = 'rgba(240,224,184,0.45)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(hitX, y + 2);
+    ctx.lineTo(hitX, y + laneH - 2);
+    ctx.stroke();
+
+    // Метка бежит к линии удара
+    if (g.running && i === g.lane) {
+      const p = clamp01(1 - (g.nextBeatAt - (ts || performance.now())) / TRAIN_BEAT_MS);
+      const mx = laneX0 + 16 + (hitX - laneX0 - 16) * p;
+      const near = Math.abs(g.nextBeatAt - (ts || performance.now())) <= TRAIN_WINDOW_MS;
+      ctx.fillStyle = near ? '#fff3c4' : '#e5b54f';
+      ctx.beginPath();
+      ctx.arc(mx, y + laneH / 2, near ? 11 : 8, 0, Math.PI * 2);
+      ctx.fill();
+      if (near) {
+        ctx.strokeStyle = 'rgba(255,243,196,0.7)';
+        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(sx - 30 + Math.cos(a) * r, groundY - H * 0.26 + Math.sin(a) * r, 1.8, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.arc(mx, y + laneH / 2, 16, 0, Math.PI * 2);
+        ctx.stroke();
       }
     }
+  }
+
+  // Вспышка на попадании
+  if (g.flash > 0) {
+    g.flash = Math.max(0, g.flash - dt * 4);
+    ctx.fillStyle = `rgba(255,240,190,${g.flash * 0.16})`;
+    ctx.fillRect(0, 0, W, H);
   }
 
   // Подписи
   ctx.fillStyle = 'rgba(240,224,184,0.85)';
   ctx.font = 'bold 12px "Segoe UI", sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('стрельба', tx, H - 10);
-  ctx.fillText('удары по пугалу', sx, H - 10);
-  ctx.fillText(`стрел выпущено: ${trainingArrows}`, W / 2, 20);
+  if (g.running) {
+    const prog = g.id ? trainProgress(g.id) : 0;
+    ctx.fillText(`серия ${g.combo} • прогресс ${Math.round((prog || 0) * 100)}%`, W * 0.78, H * 0.12);
+  } else {
+    ctx.fillText('выберите бойца и нажмите «Тренировать»', W * 0.78, H * 0.12);
+  }
+  ctx.fillText('ритм ударов', W * 0.78, H - 10);
+  ctx.textAlign = 'left';
 }
 
 function trainGlad(id) {
@@ -3286,14 +3752,323 @@ function trainGlad(id) {
 
   STATE.gold -= TRAINING_COST;
   if (!STATE.training) STATE.training = {};
-  STATE.training[id] = { start: Date.now(), dur: TRAINING_MS };
+  STATE.training[id] = { elapsed: 0, need: trainingNeedMs(g.level), beats: 0, hits: 0 };
 
   sfx('click');
   updateUI();
   renderTraining();
-  addToast(`${g.name} выходит на площадку — тренировка займёт ${Math.round(TRAINING_MS / 60000)} мин.`);
+  startTrainingGame(id);
+  addToast(`${g.name} выходит на площадку: ${fmtTime(trainingNeedMs(g.level))} чистого ритма.`);
   if (typeof Save !== 'undefined') Save.autosave();
 }
+// ==================== ПРОМЫСЕЛ: РЫБАЛКА И ОХОТА ====================
+// Мини-игра «поймай момент»: метка бегает по полосе, нужно нажать в
+// зелёной зоне. Три удачных раза — улов. Награда скромная: примерно
+// половина золота среднего боя, чтобы промысел не заменял арену.
+const WORK = {
+  type: 'fishing',
+  running: false,
+  pos: 0,
+  dir: 1,
+  speed: 0.85,
+  zone: [0.40, 0.60],
+  caught: 0,
+  attempts: 0,
+  flash: 0,
+  flashKind: '',
+  msg: '',
+  raf: null,
+  ts: 0
+};
+
+function workDef() { return WORK_TYPES[WORK.type] || WORK_TYPES.fishing; }
+
+function renderWork() {
+  const tabs = document.getElementById('work-tabs');
+  if (tabs) {
+    tabs.innerHTML = Object.values(WORK_TYPES).map(w =>
+      `<button class="work-tab ${WORK.type === w.id ? 'on' : ''}" onclick="setWorkType('${w.id}')">
+        <span class="wt-ico">${w.icon}</span>
+        <span class="wt-name">${w.name}</span>
+        <span class="wt-sub">${w.desc}</span>
+        <span class="wt-pay">до ${w.gold}з</span>
+      </button>`).join('');
+  }
+  const fg = document.getElementById('fishing-gold');
+  if (fg) fg.textContent = STATE.gold;
+  const hint = document.getElementById('work-hint');
+  if (hint) hint.textContent = workDef().hint + ' • удачных попыток: ' + WORK.caught + '/' + workDef().need;
+  const btn = document.getElementById('work-btn');
+  if (btn) btn.textContent = WORK.running ? 'Подсекать!' : (WORK.caught ? 'Продолжить' : 'Начать');
+  startWorkAnim();
+  drawWorkFrame(0);
+}
+
+function setWorkType(id) {
+  if (WORK.running) return;
+  if (!WORK_TYPES[id]) return;
+  WORK.type = id;
+  WORK.caught = 0;
+  WORK.attempts = 0;
+  WORK.msg = '';
+  sfx('click');
+  renderWork();
+}
+
+function startWorkAnim() {
+  if (WORK.raf) return;
+  WORK.ts = 0;
+  const step = ts => {
+    if (STATE.currentLocation !== 'fishing') { WORK.raf = null; WORK.ts = 0; return; }
+    const dt = WORK.ts ? Math.min((ts - WORK.ts) / 1000, 0.05) : 0.016;
+    WORK.ts = ts;
+    updateWork(dt);
+    drawWorkFrame(dt);
+    WORK.raf = requestAnimationFrame(step);
+  };
+  WORK.raf = requestAnimationFrame(step);
+}
+
+function stopWorkAnim() {
+  if (WORK.raf) cancelAnimationFrame(WORK.raf);
+  WORK.raf = null;
+  WORK.ts = 0;
+  WORK.running = false;
+}
+
+function updateWork(dt) {
+  if (!WORK.running) return;
+  WORK.pos += WORK.dir * WORK.speed * dt;
+  if (WORK.pos >= 1) { WORK.pos = 1; WORK.dir = -1; }
+  if (WORK.pos <= 0) { WORK.pos = 0; WORK.dir = 1; }
+  if (WORK.flash > 0) WORK.flash = Math.max(0, WORK.flash - dt * 2.2);
+}
+
+function workAction() {
+  const def = workDef();
+  if (!WORK.running) {
+    WORK.running = true;
+    WORK.pos = 0;
+    WORK.dir = 1;
+    WORK.caught = 0;
+    WORK.attempts = 0;
+    WORK.msg = 'Ждите нужного мгновения…';
+    // Чем больше попыток, тем шире окно — новичку не так обидно
+    WORK.zone = [0.40, 0.60];
+    sfx('click');
+    renderWork();
+    return;
+  }
+  WORK.attempts++;
+  const inZone = WORK.pos >= WORK.zone[0] && WORK.pos <= WORK.zone[1];
+  if (inZone) {
+    WORK.caught++;
+    WORK.flash = 1;
+    WORK.flashKind = 'good';
+    sfx('coin');
+    if (WORK.caught >= def.need) {
+      WORK.running = false;
+      const gold = def.gold;
+      STATE.gold += gold;
+      const who = STATE.roster[0];
+      if (who) { who.xp += def.xp; applyLevelUps(who); }
+      STATE.day++;
+      WORK.msg = `Улов! +${gold} золота${who ? ', ' + who.name + ' +' + def.xp + ' опыта' : ''}`;
+      addToast(`${def.icon} ${def.name}: +${gold} золота`);
+      sfx('levelup');
+      updateUI();
+      if (typeof Save !== 'undefined') Save.autosave();
+    } else {
+      WORK.msg = `Есть! ${WORK.caught}/${def.need}`;
+    }
+  } else {
+    WORK.flash = 1;
+    WORK.flashKind = 'bad';
+    sfx('miss');
+    WORK.msg = 'Сорвалось…';
+    // Неудача сужает окно чуть-чуть, но не больше предела
+    WORK.zone = [WORK.zone[0] + 0.02, WORK.zone[1] - 0.02];
+    if (WORK.zone[1] - WORK.zone[0] < 0.1) WORK.zone = [0.45, 0.55];
+  }
+  renderWork();
+}
+
+// Пробел — действие промысла
+document.addEventListener('keydown', e => {
+  if (e.code !== 'Space') return;
+  if (STATE.currentLocation !== 'fishing') return;
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  e.preventDefault();
+  workAction();
+});
+
+function drawWorkFrame(dt) {
+  const cv = document.getElementById('workCanvas');
+  if (!cv) return;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const def = workDef();
+  const fishing = def.id === 'fishing';
+  const t = performance.now() / 1000;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Фон: море или лес
+  if (fishing) {
+    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.5);
+    sky.addColorStop(0, '#4a6a86');
+    sky.addColorStop(1, '#c9a97a');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, H * 0.5);
+    const sea = ctx.createLinearGradient(0, H * 0.42, 0, H);
+    sea.addColorStop(0, '#3a6a8a');
+    sea.addColorStop(1, '#1e3a52');
+    ctx.fillStyle = sea;
+    ctx.fillRect(0, H * 0.42, W, H * 0.58);
+    // Волны
+    ctx.strokeStyle = 'rgba(200,230,245,0.22)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 6; i++) {
+      const y = H * 0.5 + i * 20;
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 12) {
+        const yy = y + Math.sin((x * 0.02) + t * 1.2 + i) * 3;
+        x === 0 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+    }
+    // Лодка
+    ctx.fillStyle = '#6a4a2e';
+    ctx.beginPath();
+    ctx.moveTo(W * 0.18, H * 0.62);
+    ctx.quadraticCurveTo(W * 0.30, H * 0.74, W * 0.44, H * 0.62);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#c9b48a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.31, H * 0.63);
+    ctx.lineTo(W * 0.31, H * 0.36);
+    ctx.stroke();
+    // Леска и поплавок
+    const bobX = W * 0.31 + 60 + Math.sin(t * 1.4) * 6;
+    const bobY = H * 0.66 + Math.sin(t * 2.2) * 4;
+    ctx.strokeStyle = 'rgba(230,240,250,0.5)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.31, H * 0.36);
+    ctx.quadraticCurveTo(bobX, H * 0.46, bobX, bobY);
+    ctx.stroke();
+    ctx.fillStyle = WORK.running ? '#e5b54f' : '#c05040';
+    ctx.beginPath();
+    ctx.arc(bobX, bobY, 6, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.55);
+    sky.addColorStop(0, '#6a8a5a');
+    sky.addColorStop(1, '#d8c48a');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, W, H * 0.55);
+    // Деревья
+    for (let i = 0; i < 7; i++) {
+      const x = 40 + i * (W - 80) / 7 + Math.sin(i * 3.1) * 14;
+      const h = H * (0.22 + (i % 3) * 0.05);
+      ctx.fillStyle = '#3a5236';
+      ctx.beginPath();
+      ctx.moveTo(x, H * 0.60 - h);
+      ctx.lineTo(x - 34, H * 0.60);
+      ctx.lineTo(x + 34, H * 0.60);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#4a3520';
+      ctx.fillRect(x - 5, H * 0.58, 10, 16);
+    }
+    ctx.fillStyle = '#4a6a3a';
+    ctx.fillRect(0, H * 0.58, W, H * 0.42);
+    ctx.fillStyle = 'rgba(30,50,25,0.25)';
+    for (let i = 0; i < 5; i++) {
+      ctx.beginPath();
+      ctx.ellipse(W * (0.12 + i * 0.2), H * 0.86, 60, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Кусты, из которых выходит зверь
+    ctx.fillStyle = '#2e4a2c';
+    ctx.beginPath();
+    ctx.ellipse(W * 0.62, H * 0.66, 90, 34, 0, 0, Math.PI * 2);
+    ctx.fill();
+    if (WORK.running) {
+      const px = W * 0.62 + Math.sin(t * 2) * 8;
+      ctx.fillStyle = '#7a5230';
+      ctx.beginPath();
+      ctx.ellipse(px, H * 0.64, 26, 15, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#5a3a20';
+      ctx.beginPath();
+      ctx.arc(px + 24, H * 0.60, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#5a3a20';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(px + 28, H * 0.575); ctx.lineTo(px + 34, H * 0.545);
+      ctx.moveTo(px + 20, H * 0.575); ctx.lineTo(px + 16, H * 0.545);
+      ctx.stroke();
+    }
+    // Лучник
+    ctx.fillStyle = '#3a2a18';
+    ctx.fillRect(W * 0.24, H * 0.60, 8, 34);
+    ctx.beginPath();
+    ctx.arc(W * 0.244, H * 0.585, 10, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // --- Полоса «поймай момент» ---
+  const barX = W * 0.10;
+  const barW = W * 0.80;
+  const barY = H * 0.90;
+  const barH = 18;
+  ctx.fillStyle = 'rgba(10,10,12,0.6)';
+  ctx.fillRect(barX - 4, barY - 4, barW + 8, barH + 8);
+  ctx.fillStyle = '#20262e';
+  ctx.fillRect(barX, barY, barW, barH);
+  // Зона
+  const zx = barX + barW * WORK.zone[0];
+  const zw = barW * (WORK.zone[1] - WORK.zone[0]);
+  const zoneGrad = ctx.createLinearGradient(zx, 0, zx + zw, 0);
+  zoneGrad.addColorStop(0, 'rgba(120,200,120,0.45)');
+  zoneGrad.addColorStop(0.5, 'rgba(150,230,150,0.9)');
+  zoneGrad.addColorStop(1, 'rgba(120,200,120,0.45)');
+  ctx.fillStyle = zoneGrad;
+  ctx.fillRect(zx, barY, zw, barH);
+  // Метка
+  const mx = barX + barW * WORK.pos;
+  ctx.fillStyle = WORK.running ? '#fff3c4' : '#8a8a92';
+  ctx.fillRect(mx - 3, barY - 7, 6, barH + 14);
+  ctx.fillStyle = 'rgba(255,243,196,0.35)';
+  ctx.beginPath();
+  ctx.arc(mx, barY + barH / 2, 13, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Вспышка результата
+  if (WORK.flash > 0) {
+    ctx.fillStyle = WORK.flashKind === 'good'
+      ? `rgba(150,230,150,${WORK.flash * 0.20})`
+      : `rgba(220,90,70,${WORK.flash * 0.20})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // Сообщение
+  ctx.fillStyle = 'rgba(240,232,210,0.92)';
+  ctx.font = 'bold 14px "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  if (WORK.msg) ctx.fillText(WORK.msg, W / 2, H * 0.18);
+  ctx.font = '12px "Segoe UI", sans-serif';
+  ctx.fillStyle = 'rgba(220,215,200,0.75)';
+  ctx.fillText(`${def.name} • ${WORK.caught}/${def.need} • награда до ${def.gold}з`, W / 2, H * 0.12);
+  ctx.textAlign = 'left';
+}
+
+
 
 // ==================== АРЕНА ====================
 function renderArenaScreen() {
@@ -3355,7 +4130,7 @@ function renderArenaList() {
           <span class="bc-crown">👑</span>
           <div>
             <div class="bc-name">${boss.name}</div>
-            <div class="bc-title">${boss.title} • ${boss.winAt}-я победа</div>
+            <div class="bc-title">${boss.title} • выходит на ${boss.winAt}-й победе</div>
           </div>
         </div>
         <div class="bc-intro">«${boss.intro}»</div>
@@ -3363,9 +4138,10 @@ function renderArenaList() {
           ${boss.abilities.map(a => `<span class="bc-ab">✦ ${a.name}</span>`).join('')}
         </div>
         <div class="bc-loot">Трофеи: ${(boss.loot || []).map(id => itemById(id) ? itemById(id).name : id).join(' • ')}</div>
+        <div class="bc-note">Один на один. Уровень сложности здесь не выбирается — босс всегда бьётся в полную силу.</div>
         <div class="bc-actions">
-          ${ARENA_TIERS.map(tier => `<button class="tr-go boss" ${squadOk ? '' : 'disabled'}
-            onclick="openDeploy('${tier.id}', '${boss.id}')">${tier.icon} ${tier.short}</button>`).join('')}
+          <button class="tr-go boss" ${squadOk ? '' : 'disabled'}
+            onclick="openDeploy('mid', '${boss.id}')">👑 Выйти против босса</button>
         </div>
       </div>`
     : `<div class="boss-card next">

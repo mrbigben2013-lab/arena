@@ -1,4 +1,4 @@
-// ==================== ТИРЫ ПРЕДМЕТОВ ====================
+﻿// ==================== ТИРЫ ПРЕДМЕТОВ ====================
 // Чем выше тир — тем мощнее предмет и тем дороже. Цена считается из полезности,
 // поэтому список в магазине всегда отсортирован «от слабого к сильному».
 const TIER_INFO = {
@@ -11,7 +11,10 @@ const TIER_INFO = {
 
 const TIER_F = { 1: 0.62, 2: 1, 3: 1.55, 4: 2.15, 5: 2.95 };
 const ARMOR_TIER_F = { 1: 0.66, 2: 1, 3: 1.5, 4: 2.1, 5: 2.9 };
-const TIER_PRICE_W = { 1: 1, 2: 1.7, 3: 2.8, 4: 4.6, 5: 8 };
+// Экономика: цена растёт круче, чем сила вещи. Простые вещи доступны сразу,
+// а «редкое» и «легендарное» — это уже цель на десятки боёв.
+const TIER_PRICE_W = { 1: 1, 2: 1.6, 3: 2.6, 4: 4.2, 5: 7 };
+const WEAPON_TIER_PRICE = { 1: 1, 2: 1.15, 3: 1.6, 4: 2.2, 5: 3.2 };
 
 // ==================== КОНЕЧНОСТИ ====================
 // У каждого бойца 6 частей тела. Попадание бьёт по прочности конечности.
@@ -201,7 +204,12 @@ const ARMOR_DEFS = {
     ['o_tower', 'Ростовой щит', 4, 'tower', '#7a5a38', {}, 'Стена из дуба и стали.'],
     ['o_pavise', 'Павеза', 5, 'tower', '#5a4a38', { emblem: 'gold' }, 'Осадный щит с подпоркой.'],
     ['o_lion', 'Львиный щит', 5, 'scutum', '#c9a45c', { emblem: 'lion' }, 'Золотой лев на алом поле.'],
-    ['o_tower_gold', 'Золочёный ростовой', 5, 'tower', '#d9b45c', { emblem: 'gold' }, 'Для тех, кто не боится бликов.']
+    ['o_tower_gold', 'Золочёный ростовой', 5, 'tower', '#d9b45c', { emblem: 'gold' }, 'Для тех, кто не боится бликов.'],
+    // --- Новые школы: Средневековье, Китай, Русь, Монголия ---
+    ['o_knight_shield', 'Рыцарский щит', 4, 'kite', '#3a4a6a', { emblem: 'cross', visStyle: 'medieval' }, 'Синее поле, золотой крест.'],
+    ['o_han_shield', 'Щит эпохи Хань', 4, 'round', '#8a2f28', { emblem: 'gold', visStyle: 'china' }, 'Лак и бронза, круглый, как солнце.'],
+    ['o_rus_shield', 'Русский щит', 4, 'kite', '#7a2f28', { emblem: 'lion', visStyle: 'rus' }, 'Червлёный щит с золотым зверем.'],
+    ['o_mongol_shield', 'Монгольский щит', 4, 'round', '#6a4a2e', { emblem: 'studs', visStyle: 'mongol' }, 'Плетёный из прутьев, обтянут кожей.']
   ],
   head: [
     ['h_band', 'Кожаная повязка', 1, 'cap', '#7d5637', {}, 'Хоть что-то для головы.'],
@@ -219,7 +227,12 @@ const ARMOR_DEFS = {
     ['h_greathelm', 'Топфхельм', 4, 'greathelm', '#ccd6e0', {}, 'Глухой стальной цилиндр.'],
     ['h_horned', 'Рогатый шлем ярла', 4, 'horned', '#b9c4cf', {}, 'Враги запоминают такой силуэт.'],
     ['h_crown', 'Венец чемпиона', 5, 'crown', '#e5b54f', { def: 6 }, 'Золото на голове не защищает, но пугает.'],
-    ['h_imperial_gold', 'Имперский венец', 5, 'crown', '#f0d070', { def: 8, trim: '#c0392b' }, 'Лавры и золото. Носить — честь.']
+    ['h_imperial_gold', 'Имперский венец', 5, 'crown', '#f0d070', { def: 8, trim: '#c0392b' }, 'Лавры и золото. Носить — честь.'],
+    // --- Новые школы: Средневековье, Китай, Русь, Монголия ---
+    ['h_knight_bascinet', 'Рыцарский бацинет', 4, 'greathelm', '#c8d4e0', { visStyle: 'medieval', trim: '#c0392b' }, 'Стальной купол с плюмажем.'],
+    ['h_han_cap', 'Ханьский колпак', 4, 'hanhelm', '#8a2f28', { visStyle: 'china', trim: '#e2b65a' }, 'Лаковая шапочка с золотым шипом.'],
+    ['h_rus_helm', 'Русский шелом', 4, 'rushelm', '#b8c2cc', { visStyle: 'rus', trim: '#c9a45c' }, 'Высокий купол с бармицей.'],
+    ['h_mongol_helm', 'Монгольский шлем', 4, 'mongolhelm', '#8a7a5a', { visStyle: 'mongol', trim: '#5a4a2e' }, 'Кожа и сталь, меховой обод.']
   ],
   body: [
     ['b_rags', 'Лохмотья', 1, 'rags', '#8a7a66', {}, 'Ткань и дыры.'],
@@ -239,7 +252,12 @@ const ARMOR_DEFS = {
     ['b_lamellar', 'Ламеллярный доспех', 4, 'lamellar', '#b08a4a', {}, 'Пластины, стянутые шнуром.'],
     ['b_plate', 'Кираса центуриона', 5, 'plate', '#d8b455', {}, 'Бронза и сталь. Носивший её не проигрывал.'],
     ['b_dragon', 'Драконья чешуя', 5, 'dragon', '#4a8a6a', {}, 'Чешуя, которой не должно быть.'],
-    ['b_imperial', 'Имперские латы', 5, 'imperial', '#e8c65f', {}, 'Парад и война в одном доспехе.']
+    ['b_imperial', 'Имперские латы', 5, 'imperial', '#e8c65f', {}, 'Парад и война в одном доспехе.'],
+    // --- Новые школы: Средневековье, Китай, Русь, Монголия ---
+    ['b_knight_plate', 'Рыцарский доспех', 4, 'medieval', '#c0cad6', { trim: '#c0392b' }, 'Сборные латы с наплечниками и нагрудником.'],
+    ['b_han_lamellar', 'Ханьский ламелляр', 4, 'china', '#a83a2c', { trim: '#e2b65a' }, 'Красный лак, бронзовые пластины, пояс с драконом.'],
+    ['b_rus_kolchuga', 'Русская кольчуга', 4, 'rus', '#9aa8b4', { trim: '#8a2f28' }, 'Плотное плетение с медными вставками.'],
+    ['b_mongol_khatanga', 'Монгольский хатанга', 4, 'mongol', '#8a6a44', { trim: '#c9a45c' }, 'Кожа и сталь, меховой воротник.']
   ],
   arms: [
     ['a_leather_guard', 'Кожаные наручи', 1, 'wraps', '#7a5a3a', {}, 'Ремни на предплечьях.'],
@@ -253,7 +271,12 @@ const ARMOR_DEFS = {
     ['a_plate_arms', 'Латные наплечники', 4, 'plate', '#d8b455', {}, 'Тяжёлая защита рук и плеч.'],
     ['a_iron_vambraces', 'Железные наручи', 4, 'plate', '#b0bac4', {}, 'Просто и надёжно.'],
     ['a_gold_arms', 'Позолоченные наручи', 5, 'plate', '#e8c65f', {}, 'Роскошь на запястьях.'],
-    ['a_titan_arms', 'Наручи титана', 5, 'plate', '#8a6a4a', {}, 'Слишком велики, но держатся.']
+    ['a_titan_arms', 'Наручи титана', 5, 'plate', '#8a6a4a', {}, 'Слишком велики, но держатся.'],
+    // --- Новые школы: Средневековье, Китай, Русь, Монголия ---
+    ['a_knight_vambraces', 'Рыцарские наручи', 4, 'medieval', '#c0cad6', { trim: '#c0392b' }, 'Стальные створки на всю руку.'],
+    ['a_han_sleeves', 'Ханьские рукава', 4, 'china', '#a83a2c', { trim: '#e2b65a' }, 'Лаковая пластинчатая защита предплечий.'],
+    ['a_rus_bracers', 'Русские наручи', 4, 'rus', '#9aa8b4', { trim: '#8a2f28' }, 'Кольчуга и медные бляхи.'],
+    ['a_mongol_bracers', 'Монгольские наручи', 4, 'mongol', '#8a6a44', { trim: '#c9a45c' }, 'Кожа, стянутая стальными полосами.']
   ],
   legs: [
     ['l_bare_boots', 'Кожаные сапоги', 1, 'boots', '#6b4a2e', {}, 'Мягкая кожа.'],
@@ -267,7 +290,12 @@ const ARMOR_DEFS = {
     ['l_gold_greaves', 'Позолоченные поножи', 4, 'gold', '#e0bc5a', {}, 'Роскошь, которую не стыдно забрызгать кровью.'],
     ['l_iron_greaves', 'Железные латы ног', 4, 'plate', '#b0bac4', {}, 'Тяжело ходить, зато не больно.'],
     ['l_imperial_greaves', 'Имперские поножи', 5, 'gold', '#e8c65f', {}, 'Сталь с золотом.'],
-    ['l_titan_greaves', 'Поножи титана', 5, 'gold', '#c9a45c', {}, 'Выдержат удар тарана.']
+    ['l_titan_greaves', 'Поножи титана', 5, 'gold', '#c9a45c', {}, 'Выдержат удар тарана.'],
+    // --- Новые школы: Средневековье, Китай, Русь, Монголия ---
+    ['l_knight_greaves', 'Рыцарские поножи', 4, 'medieval', '#c0cad6', { trim: '#c0392b' }, 'Кованые створки с наколенниками.'],
+    ['l_han_leggings', 'Ханьские поножи', 4, 'china', '#a83a2c', { trim: '#e2b65a' }, 'Лак и пластины до колен.'],
+    ['l_rus_leggings', 'Русские поножи', 4, 'rus', '#9aa8b4', { trim: '#8a2f28' }, 'Кольчуга и кожаные ремни.'],
+    ['l_mongol_leggings', 'Монгольские поножи', 4, 'mongol', '#8a6a44', { trim: '#c9a45c' }, 'Мягкая кожа со стальными накладками.']
   ]
 };
 
@@ -333,14 +361,9 @@ function reqForArmor(it) {
   return req;
 }
 
-// Проверка: хватает ли характеристик и подходит ли класс
+// Проверка: хватает ли характеристик
 function canEquipItem(glad, item) {
   if (!item) return { ok: true, missing: [] };
-  // Классовое снаряжение носит только свой класс
-  if (item.clsOnly && glad && glad.cls !== item.clsOnly) {
-    const cls = classById(item.clsOnly);
-    return { ok: false, missing: [], wrongClass: cls ? cls.name : item.clsOnly };
-  }
   if (!item.req) return { ok: true, missing: [] };
   const attrs = glad.attrs || {};
   const missing = [];
@@ -354,15 +377,13 @@ function canEquipItem(glad, item) {
 
 // ==================== ПРАВИЛА РУК ====================
 // Правая рука держит любое оружие. Левая — щит ИЛИ второй одноручный клинок.
-// Димахер щит не носит вовсе: у него всегда два клинка.
-function classAllowsShield(glad) {
-  if (!glad) return true;
-  return glad.cls !== 'dimachaerus';
+// Снаряжение универсальное: класс не ограничивает ни щит, ни оружие.
+function classAllowsShield() {
+  return true;
 }
 
 // Можно ли положить этот предмет во вторую руку как оружие.
-// Годится одноручный клинок; «парные» наборы и клинки димахера
-// (offhandOnly) — это уже готовый второй клинок.
+// Годится одноручный клинок; «парные» наборы — это уже готовый второй клинок.
 function canOffhandWeapon(glad, item) {
   if (!item || item.slot !== 'weapon') return false;
   if (item.bothHands) return false;                 // двуручное занимает обе руки
@@ -371,7 +392,7 @@ function canOffhandWeapon(glad, item) {
   return true;
 }
 
-// Годится ли оружие в правую руку: клинок димахера — только в левую
+// Годится ли оружие в правую руку: второй клинок набора — только в левую
 function canMainWeapon(glad, item) {
   if (!item || item.slot !== 'weapon') return false;
   return !item.offhandOnly;
@@ -413,7 +434,8 @@ function priceWeapon(it) {
   const dps = (it.dmgMin + it.dmgMax) / 2 / Math.max(1, it.apCost);
   const u = dps * (1 + it.armorPen * 1.4) * (1 + it.hitMod * 0.015) * (1 + (it.range - 1) * 0.1);
   const base = 9 * Math.pow(u, 1.35) + it.tier * 18;
-  return Math.max(20, Math.round(base / 5) * 5);
+  const p = base * (WEAPON_TIER_PRICE[it.tier] || 1);
+  return Math.max(20, Math.round(p / 5) * 5);
 }
 
 function priceArmor(it) {
@@ -452,7 +474,7 @@ Object.keys(WEAPON_PROFILE).forEach(cat => {
     // Вес влияет на кулдаун удара: тяжёлое оружие замахивается дольше.
     it.weight = weaponWeightOf(it);
     it.price = priceWeapon(it);
-    it.famePrice = Math.max(1, Math.round(it.price / 45));
+    it.famePrice = Math.max(1, Math.round(it.price / 18));
     it.req = reqForWeapon(it);
     ITEMS_DB.push(it);
   });
@@ -476,8 +498,9 @@ Object.keys(ARMOR_PROFILE).forEach(slot => {
     if (m.face) it.faceMask = true;
     it.gearClass = 'universal';
     it.price = priceArmor(it);
-    // Слава — вторая валюта: дорогое снаряжение можно взять за неё
-    it.famePrice = Math.max(1, Math.round(it.price / 45));
+    // Слава — вторая валюта: дорогое снаряжение можно взять за неё,
+    // но курс жёсткий — легендарная вещь стоит десяток побед.
+    it.famePrice = Math.max(1, Math.round(it.price / 18));
     it.req = reqForArmor(it);
     ITEMS_DB.push(it);
   });
@@ -805,14 +828,15 @@ const ENEMY_TEMPLATES = {
 };
 
 // ==================== БОССЫ АРЕНЫ ====================
-// Каждый 10-й победный бой — босс. Их пять, каждый сильнее предыдущего.
-// У каждого свой облик, своё оружие и броня, свои уникальные способности.
+// Босс выходит один — без свиты. Сложность босс-боя фиксирована.
+// Порог побед: 5 → 20 → 40 → 65 → 100. Каждый босс сильнее предыдущего,
+// у каждого свой облик, своё оружие и броня, свои уникальные способности.
 const BOSS_LADDER = [
   {
     id: 'boss_ash',
     name: 'Ганник Пепельный',
     title: 'Первый страж песка',
-    winAt: 20,
+    winAt: 5,
     tier: 2,
     look: { build: 'muscular', skin: '#cf9468', hair: '#2a2118', hairStyle: 'shaved', beard: 'stubble', gender: 'male' },
     aura: '#b8b0a4',
@@ -828,7 +852,7 @@ const BOSS_LADDER = [
     id: 'boss_mortus',
     name: 'Мортус Жрец',
     title: 'Голос мёртвых',
-    winAt: 40,
+    winAt: 20,
     tier: 3,
     look: { build: 'slim', skin: '#b8bcc0', hair: '#e4e2dc', hairStyle: 'bald', beard: 'long', gender: 'male' },
     aura: '#8a9aa6',
@@ -845,7 +869,7 @@ const BOSS_LADDER = [
     id: 'boss_ignis',
     name: 'Игнис Пламенный',
     title: 'Жрец пара и огня',
-    winAt: 60,
+    winAt: 40,
     tier: 4,
     look: { build: 'normal', skin: '#a9744c', hair: '#a84a3a', hairStyle: 'mohawk', beard: 'goatee', gender: 'male' },
     aura: '#e08a4a',
@@ -863,7 +887,7 @@ const BOSS_LADDER = [
     id: 'boss_skadi',
     name: 'Скади Белая',
     title: 'Королева вечной зимы',
-    winAt: 80,
+    winAt: 65,
     tier: 5,
     look: { build: 'slim', skin: '#f5c9a4', hair: '#e4e2dc', hairStyle: 'braids', beard: 'none', gender: 'female' },
     aura: '#cfe6f2',
@@ -1045,8 +1069,8 @@ const EVENTS = [
   {
     id: 'betrayal',
     type: 'bad', icon: '🚪', weight: 4,
-    title: 'Ушёл ночью',
-    text: 'Один из бойцов забрал свои вещи и исчез. На песке всегда есть те, кто не выдерживает.',
+    title: 'Ночь без сна',
+    text: 'Бойцы всю ночь спорили о доле. Утром один вышел мрачнее тучи и еле держится на ногах — но из лудуса не ушёл.',
     effects: [{ loseWeakest: true }]
   },
 
@@ -1122,8 +1146,79 @@ const CITY_LOCATIONS = [
     x: 0.945, y: 0.545, size: 0.78, accent: '#a8895e' },
   { id: 'training', icon: '🎯', name: 'Двор тренировок', sub: 'Palaestra',
     desc: 'Опыт без риска',
-    x: 0.885, y: 0.815, size: 0.72, accent: '#a8c46a' }
+    x: 0.885, y: 0.815, size: 0.72, accent: '#a8c46a' },
+  // Море в правой части панорамы: рыбацкая лодка у причала
+  { id: 'fishing', icon: '🎣', name: 'Промысел', sub: 'Piscatio',
+    desc: 'Рыбалка и охота: скромный заработок',
+    x: 0.472, y: 0.258, size: 0.70, accent: '#5f9ec4' }
 ];
+
+// ==================== КОСМЕТИКА ЗА СЛАВУ ====================
+// Слава больше не покупает снаряжение — она покупает облик. Косметика
+// не даёт ни урона, ни защиты: только то, что видит толпа.
+const COSMETICS = [
+  { id: 'build_slim',    group: 'Телосложение', name: 'Сухой',        fame: 8,  kind: 'build', value: 'slim' },
+  { id: 'build_normal',  group: 'Телосложение', name: 'Обычный',      fame: 0,  kind: 'build', value: 'normal' },
+  { id: 'build_muscular',group: 'Телосложение', name: 'Мышцы',        fame: 20, kind: 'build', value: 'muscular' },
+  { id: 'build_heavy',   group: 'Телосложение', name: 'Гора',         fame: 32, kind: 'build', value: 'heavy' },
+
+  { id: 'hair_short',    group: 'Причёска', name: 'Короткая',         fame: 0,  kind: 'hair', value: 'short' },
+  { id: 'hair_long',     group: 'Причёска', name: 'Длинная',          fame: 10, kind: 'hair', value: 'long' },
+  { id: 'hair_ponytail', group: 'Причёска', name: 'Хвост',            fame: 14, kind: 'hair', value: 'ponytail' },
+  { id: 'hair_mohawk',   group: 'Причёска', name: 'Ирокез',           fame: 26, kind: 'hair', value: 'mohawk' },
+  { id: 'hair_bald',     group: 'Причёска', name: 'Бритая голова',    fame: 6,  kind: 'hair', value: 'bald' },
+
+  { id: 'tattoo_none',   group: 'Татуировки', name: 'Без татуировок', fame: 0,  kind: 'tattoo', value: 'none' },
+  { id: 'tattoo_bands',  group: 'Татуировки', name: 'Кольца на руках',fame: 12, kind: 'tattoo', value: 'bands' },
+  { id: 'tattoo_snake',  group: 'Татуировки', name: 'Змей на плече',  fame: 24, kind: 'tattoo', value: 'snake' },
+  { id: 'tattoo_wings',  group: 'Татуировки', name: 'Крылья на спине',fame: 40, kind: 'tattoo', value: 'wings' },
+  { id: 'tattoo_runes',  group: 'Татуировки', name: 'Руны',           fame: 34, kind: 'tattoo', value: 'runes' },
+
+  { id: 'paint_none',    group: 'Раскраска', name: 'Без раскраски',   fame: 0,  kind: 'paint', value: 'none' },
+  { id: 'paint_war',     group: 'Раскраска', name: 'Боевая',          fame: 18, kind: 'paint', value: 'war' },
+  { id: 'paint_ash',     group: 'Раскраска', name: 'Пепел',           fame: 22, kind: 'paint', value: 'ash' },
+  { id: 'paint_gold',    group: 'Раскраска', name: 'Золото',          fame: 48, kind: 'paint', value: 'gold' }
+];
+
+const COSMETIC_BY_ID = {};
+COSMETICS.forEach(c => { COSMETIC_BY_ID[c.id] = c; });
+
+// Что уже куплено: храним на самом бойце в glad.cosmetic.
+// По умолчанию облик бесплатный и уже «принадлежит» бойцу.
+function cosmeticOwned(glad, c) {
+  if (!glad || !c) return false;
+  const own = glad.cosmeticOwned || [];
+  if (!c.fame) return true;      // базовые варианты бесплатны
+  return own.indexOf(c.id) >= 0;
+}
+
+function gladCosmetic(glad, kind, fallback) {
+  const c = glad && glad.cosmetic ? glad.cosmetic : null;
+  return (c && c[kind]) || fallback;
+}
+
+// ==================== ПРОМЫСЛЫ ====================
+// Рыбалка и охота — способ дотянуть до следующего боя, а не заменить арену.
+// Награда за один промысел — примерно половина золота среднего боя
+// (средний бой даёт около 72 золота), поэтому экономику это не ломает.
+const WORK_TYPES = {
+  fishing: {
+    id: 'fishing', name: 'Морская рыбалка', sub: 'Piscatio', icon: '🎣',
+    accent: '#5f9ec4',
+    desc: 'Поплавок уходит под воду — подсекайте вовремя.',
+    gold: 36, xp: 10,
+    need: 3,               // сколько удачных подсечек до улова
+    hint: 'Пробел или клик — подсечка'
+  },
+  hunting: {
+    id: 'hunting', name: 'Лесная охота', sub: 'Venatio', icon: '🏹',
+    accent: '#8aa85c',
+    desc: 'Зверь выходит из кустов — бейте в нужный миг.',
+    gold: 34, xp: 14,
+    need: 3,
+    hint: 'Пробел или клик — выстрел'
+  }
+};
 
 const ROLE_LABELS = { melee: 'Ближний бой', ranged: 'Дальний бой', shield: 'Защитник', beast: 'Зверь', mage: 'Маг' };
 const ROLE_ICONS = { melee: '🗡️', ranged: '🏹', shield: '🛡️', beast: '🐕', mage: '✨' };
@@ -1563,354 +1658,10 @@ function pickClassForRole(role) {
   return list[Math.floor(Math.random() * list.length)];
 }
 
-// ==================== КЛАССОВОЕ СНАРЯЖЕНИЕ ====================
-// У каждого класса свой комплект: 10 вооружений и 10 доспехов.
-// Такие вещи нельзя надеть бойцу другого класса — это и есть смысл класса.
-const CLASS_GEAR = {
-  murmillo: {
-    weaponCat: 'sword',
-    weapons: ['гладиус мурмиллона', 'тяжёлый гладиус'],
-    armor: {
-      offhand: ['скутум мурмиллона', 'большой скутум'],
-      head: ['шлем мурмиллона', 'глухой шлем'],
-      body: ['лорика мурмиллона', 'кираса мурмиллона'],
-      arms: ['маника мурмиллона', 'наручи мурмиллона'],
-      legs: ['поножи мурмиллона', 'обмотки мурмиллона']
-    }
-  },
-  retiarius: {
-    weaponCat: 'polearm',
-    weapons: ['трезубец ретиария', 'гарпун ретиария'],
-    armor: {
-      offhand: ['сеть ретиария', 'утяжелённая сеть'],
-      head: ['повязка ретиария', 'лёгкий шлем ретиария'],
-      body: ['туника ретиария', 'стёганка ретиария'],
-      arms: ['обмотки ретиария', 'наручи ретиария'],
-      legs: ['обмотки ног ретиария', 'лёгкие поножи ретиария']
-    }
-  },
-  thraex: {
-    weaponCat: 'sword',
-    weapons: ['сика фракийца', 'кривой клинок фракийца'],
-    armor: {
-      offhand: ['малый щит фракийца', 'баклер фракийца'],
-      head: ['шлем фракийца', 'гребневой шлем'],
-      body: ['кираса фракийца', 'стёганка фракийца'],
-      arms: ['маника фракийца', 'наручи фракийца'],
-      legs: ['высокие поножи фракийца', 'поножи фракийца']
-    }
-  },
-  hoplomachus: {
-    weaponCat: 'polearm',
-    weapons: ['копьё гопломаха', 'длинное копьё гопломаха'],
-    armor: {
-      offhand: ['аспис гопломаха', 'круглый щит гопломаха'],
-      head: ['шлем гопломаха', 'бронзовый шлем'],
-      body: ['бронзовая кираса', 'лорика гопломаха'],
-      arms: ['наручи гопломаха', 'бронзовые наручи'],
-      legs: ['поножи гопломаха', 'бронзовые поножи']
-    }
-  },
-  dimachaerus: {
-    weaponCat: 'dual',
-    weapons: ['парные клинки димахера', 'парные кинжалы димахера'],
-    armor: {
-      offhand: ['второй клинок димахера', 'лёгкий баклер димахера'],
-      head: ['лёгкий шлем димахера', 'кожаный шлем'],
-      body: ['стёганка димахера', 'кожаный доспех димахера'],
-      arms: ['обмотки димахера', 'наручи димахера'],
-      legs: ['обмотки ног димахера', 'лёгкие поножи димахера']
-    }
-  },
-  sagittarius: {
-    weaponCat: 'ranged',
-    weapons: ['лук сагиттария', 'составной лук сагиттария'],
-    armor: {
-      offhand: ['колчан сагиттария', 'запасной колчан'],
-      head: ['капюшон сагиттария', 'лёгкий шлем сагиттария'],
-      body: ['стёганка сагиттария', 'кожаный доспех сагиттария'],
-      arms: ['наручи сагиттария', 'кожаные наручи'],
-      legs: ['сапоги сагиттария', 'обмотки сагиттария']
-    }
-  },
-  bestiarius: {
-    weaponCat: 'polearm',
-    weapons: ['рогатина бестиария', 'копьё бестиария'],
-    armor: {
-      offhand: ['щит бестиария', 'лёгкий баклер бестиария'],
-      head: ['шлем бестиария', 'кожаный шлем'],
-      body: ['кожаный доспех бестиария', 'стёганка бестиария'],
-      arms: ['наручи бестиария', 'кожаные наручи'],
-      legs: ['поножи бестиария', 'кожаные поножи']
-    }
-  },
-  crupellarius: {
-    weaponCat: 'sword',
-    weapons: ['гладиус крупеллария', 'тяжёлый клинок крупеллария'],
-    armor: {
-      offhand: ['башенный щит крупеллария', 'ростовой щит'],
-      head: ['глухой шлем крупеллария', 'топфхельм крупеллария'],
-      body: ['латы крупеллария', 'кираса крупеллария'],
-      arms: ['латные наплечники крупеллария', 'наручи крупеллария'],
-      legs: ['латные поножи крупеллария', 'поножи крупеллария']
-    }
-  },
-  veles: {
-    weaponCat: 'dagger',
-    weapons: ['дротик велита', 'лёгкий дротик велита'],
-    armor: {
-      offhand: ['лёгкий баклер велита', 'кожаный щит велита'],
-      head: ['лёгкий шлем велита', 'повязка велита'],
-      body: ['туника велита', 'стёганка велита'],
-      arms: ['обмотки велита', 'наручи велита'],
-      legs: ['сандалии велита', 'обмотки ног велита']
-    }
-  },
-  provocator: {
-    weaponCat: 'sword',
-    weapons: ['гладиус провокатора', 'широкий клинок провокатора'],
-    armor: {
-      offhand: ['средний щит провокатора', 'щит провокатора'],
-      head: ['шлем провокатора', 'гребневой шлем провокатора'],
-      body: ['кираса провокатора', 'лорика провокатора'],
-      arms: ['маника провокатора', 'наручи провокатора'],
-      legs: ['поножи провокатора', 'обмотки провокатора']
-    }
-  }
-};
-
-const CLASS_ITEM_TIERS = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
-const CLASS_TIER_PREFIX = ['Ржавый', 'Добротный', 'Закалённый', 'Имперский', 'Легендарный'];
-const CLASS_ARMOR_SLOTS = ['offhand', 'offhand', 'head', 'head', 'body', 'body', 'arms', 'arms', 'legs', 'legs'];
-
-// Как рисовать классовое оружие: наследуем форму от категории
-const CLASS_WEAPON_VIS = {
-  sword:   { head: 'blade', len: 54, curve: .04, guard: 'cross', metal: '#c8d2dc', grip: '#6b4a2a' },
-  polearm: { head: 'spear', len: 104, metal: '#a37850', grip: '#5d3f24', tip: '#d6e0ea' },
-  dual:    { head: 'blade', len: 46, curve: .1, guard: 'cross', metal: '#c8d2dc', grip: '#6b4a2a', dual: true },
-  ranged:  { head: 'bow', len: 52, metal: '#b8834f', grip: '#6b4a2a' },
-  dagger:  { head: 'blade', len: 30, curve: .05, guard: 'cross', metal: '#c3cfdb', grip: '#5a4028' },
-  spear:   { head: 'spear', len: 96, metal: '#a37850', grip: '#5d3f24', tip: '#d6e0ea' }
-};
-
-const CLASS_ARMOR_VIS = {
-  offhand: { vis: 'round', color: '#8a6a48' },
-  head:    { vis: 'cap',   color: '#a9b3bd' },
-  body:    { vis: 'leather', color: '#8a6a48' },
-  arms:    { vis: 'bracers', color: '#a9b3bd' },
-  legs:    { vis: 'greaves', color: '#9a7a50' }
-};
-
-// Таблицы уникальных свойств. Классовое оружие отличается не именем,
-// а характером: у кого-то выше точность, кто-то экономит ОД, кто-то пробивает
-// броню, кто-то даёт шанс парирования, а кто-то поднимает характеристику.
-// Индекс i (0..9) задаёт «архетип» предмета — один и тот же архетип всегда
-// даёт одинаковый набор модификаторов, поэтому предметы читаются честно.
-const CLASS_WEAPON_ARCHETYPES = [
-  { key: 'balanced',   ap: 0,  hit: 0,   pen: 0,    dmg: 0,    parry: 0,  attr: null,        tag: 'Сбалансированный клинок' },
-  { key: 'quick',      ap: -1, hit: -4,  pen: -0.02, dmg: -3,  parry: 0,  attr: null,        tag: 'Быстрый: удар дешевле на 1 ОД' },
-  { key: 'precise',    ap: 0,  hit: 12,  pen: 0.02, dmg: -1,   parry: 0,  attr: null,        tag: 'Точный: заметно выше шанс попадания' },
-  { key: 'pierce',     ap: 0,  hit: -2,  pen: 0.16, dmg: 1,    parry: 0,  attr: null,        tag: 'Бронебойный: рвёт доспех' },
-  { key: 'guard',      ap: 1,  hit: 2,   pen: 0,    dmg: 2,    parry: 12, attr: null,        tag: 'Крепкий хват: шанс парирования' },
-  { key: 'heavy',      ap: 1,  hit: -5,  pen: 0.05, dmg: 9,    parry: 0,  attr: null,        tag: 'Тяжёлый: сильный удар, дорог по ОД' },
-  { key: 'nimble',     ap: -1, hit: 6,   pen: 0,    dmg: -4,   parry: 4,  attr: { dex: 1 },  tag: 'Лёгкий: +1 ловкость носителя' },
-  { key: 'sturdy',     ap: 0,  hit: 0,   pen: 0.02, dmg: 3,    parry: 6,  attr: { str: 1 },  tag: 'Верткий: +1 сила носителя' },
-  { key: 'master',     ap: -1, hit: 8,   pen: 0.08, dmg: 4,    parry: 8,  attr: { sta: 1 },  tag: 'Мастерский: +1 выносливость, всё понемногу' },
-  { key: 'legend',     ap: 0,  hit: 10,  pen: 0.12, dmg: 8,    parry: 10, attr: { wil: 1 },  tag: 'Легендарный: +1 воля, лучший в линейке' }
-];
-
-// Визуальные отличия архетипов: разная длина, гарда, металл и рукоять,
-// чтобы предметы различались не только цифрами, но и на картинке.
-const CLASS_WEAPON_LOOK = [
-  { lenMul: 1.00, guard: 'cross',   metal: '#b9c4cf', grip: '#5a4028', tip: '#d6e0ea' },
-  { lenMul: 0.86, guard: 'none',    metal: '#cfd8e2', grip: '#6b4a2a', tip: '#e2ecf6' },
-  { lenMul: 1.08, guard: 'disc',    metal: '#dfe7f0', grip: '#4a3320', tip: '#eaf2fa' },
-  { lenMul: 0.96, guard: 'cross',   metal: '#aab6c2', grip: '#3f2b1a', tip: '#c8d2dc' },
-  { lenMul: 1.14, guard: 'basket',  metal: '#c2ced9', grip: '#6b4a2a', tip: '#d8e2ec' },
-  { lenMul: 1.22, guard: 'cross2',  metal: '#98a4b0', grip: '#33220f', tip: '#c0ccd8' },
-  { lenMul: 0.80, guard: 'disc',    metal: '#e6c98a', grip: '#7a5230', tip: '#f0dca8' },
-  { lenMul: 1.05, guard: 'basket',  metal: '#c9a45c', grip: '#5d3f24', tip: '#e8d5a0' },
-  { lenMul: 1.10, guard: 'basket',  metal: '#e0b45f', grip: '#7a2f28', tip: '#f6e6b8' },
-  { lenMul: 1.16, guard: 'cross2',  metal: '#f0d070', grip: '#8c2f28', tip: '#fff0c0' }
-];
-
-// Названия архетипов по категориям — чтобы оружие звучало как свой класс
-const CLASS_WEAPON_NAMES = {
-  balanced: ['Клинок', 'Меч', 'Остриё'],
-  quick:    ['Кинжал', 'Быстрый клинок', 'Лёгкий меч'],
-  precise:  ['Меткий клинок', 'Точный меч', 'Стрелок'],
-  pierce:   ['Пробойник', 'Клевач', 'Шило'],
-  guard:    ['Дозорный клинок', 'Ратный меч', 'Оборонитель'],
-  heavy:    ['Тяжёлый меч', 'Рубака', 'Дробик'],
-  nimble:   ['Танцующий клинок', 'Верткий меч', 'Плясун'],
-  sturdy:   ['Кузнечный меч', 'Крепкий клинок', 'Батырь'],
-  master:   ['Мастерский клинок', 'Чемпионский меч', 'Наставник'],
-  legend:   ['Легендарный клинок', 'Венец арены', 'Гроза Колизея']
-};
-
-// Классовое снаряжение — не рыночный товар, а вещь из школы арены.
-// Оно подогнано под бойца, заточено под его манеру и потому по всем
-// статьям немного превосходит универсальное того же тира.
-// Универсальное оружие может взять любой боец — это его плюс: выбор.
-const CLASS_GEAR_EDGE = {
-  dmg: 1.12,      // +12% урона
-  hit: 4,         // +4 к точности
-  pen: 1.15,      // +15% бронебоя
-  parry: 4,       // +4% парирования
-  apDiscount: 1   // удар дешевле на 1 ОД
-};
-
-// Собираем 10+10 предметов на класс прямо в общую базу
-(function buildClassGear() {
-  Object.keys(CLASS_GEAR).forEach(clsId => {
-    const gear = CLASS_GEAR[clsId];
-    const cls = CLASS_DEFS[clsId];
-    if (!cls) return;
-
-    // --- Оружие: 10 уникальных предметов ---
-    const cat = gear.weaponCat;
-    const prof = WEAPON_PROFILE[cat];
-    if (prof) {
-      CLASS_WEAPON_ARCHETYPES.forEach((arch, i) => {
-        const tier = CLASS_ITEM_TIERS[i];
-        const f = TIER_F[tier];
-        const look = CLASS_WEAPON_LOOK[i];
-        const nounPool = CLASS_WEAPON_NAMES[arch.key] || CLASS_WEAPON_NAMES.balanced;
-        const noun = nounPool[i % nounPool.length];
-        const name = `${noun} «${cls.name}»`;
-
-        // Чем тяжелее оружие — тем больше ОД. Архетип это усиливает или гасит.
-        const weightAp = Math.round((prof.base[1] - prof.base[0]) / 16);
-        // Классовое оружие — школа арены, а не рынок: у него есть свой хват,
-        // своя заточка и подгонка под бойца. Поэтому по всем статьям оно
-        // немного превосходит универсальное того же тира (см. CLASS_GEAR_EDGE).
-        const edge = CLASS_GEAR_EDGE;
-        const twoHanded = !!prof.twoHanded;
-        const it = {
-          id: `cw_${clsId}_${i + 1}`,
-          name, slot: 'weapon', cat, tier,
-          shape: 'class',
-          dmgMin: Math.max(4, Math.round(prof.base[0] * f * edge.dmg + arch.dmg * 0.6 + tier)),
-          dmgMax: Math.max(8, Math.round(prof.base[1] * f * edge.dmg + arch.dmg + tier)),
-          range: weaponRangeFor(cat),
-          apCost: Math.max(1, prof.ap + weightAp + arch.ap - edge.apDiscount),
-          hitMod: Math.round(prof.hit + arch.hit + edge.hit),
-          armorPen: Math.max(0.04, +(prof.pen * edge.pen + arch.pen).toFixed(2)),
-          twoHanded,
-          dualPair: cat === 'dual',
-          bothHands: twoHanded,
-          parryChance: (arch.parry || 0) + edge.parry,
-          attrBonus: arch.attr ? { ...arch.attr } : null,
-          gearClass: 'class',
-          desc: `${arch.tag}. Оружие класса «${cls.name}».`,
-          vis: Object.assign({}, CLASS_WEAPON_VIS[cat] || CLASS_WEAPON_VIS.sword, {
-            len: Math.round((CLASS_WEAPON_VIS[cat] || CLASS_WEAPON_VIS.sword).len * look.lenMul),
-            guard: look.guard, metal: look.metal, grip: look.grip, tip: look.tip
-          }),
-          clsOnly: clsId
-        };
-        it.weight = Math.round((weaponWeightOf(it) * 1.05) * 10) / 10;
-        it.price = Math.round(priceWeapon(it) * 1.25);
-        it.famePrice = Math.max(1, Math.round(it.price / 45));
-        it.req = reqForWeapon(it);
-        ITEMS_DB.push(it);
-        ITEM_MAP[it.id] = it;
-      });
-    }
-
-    // --- Доспехи: 10 уникальных предметов ---
-    const ARM_ARCH = [
-      { tag: 'Базовая защита',        armor: 0,  def: 0, ap: 0,  attr: null },
-      { tag: 'Лёгкий: не сковывает',  armor: -6, def: 0, ap: 1,  attr: { dex: 1 } },
-      { tag: 'Прочный: держит удар',  armor: 8,  def: 0, ap: -1, attr: null },
-      { tag: 'Обшитый сталью',        armor: 12, def: 0, ap: -1, attr: null },
-      { tag: 'С удобной перевязью',   armor: 2,  def: 3, ap: 0,  attr: { sta: 1 } },
-      { tag: 'Тяжёлый панцирь',       armor: 18, def: 0, ap: -2, attr: { vit: 1 } },
-      { tag: 'Гладиаторская школа',   armor: 6,  def: 5, ap: 0,  attr: null },
-      { tag: 'Клепаный и усиленный',  armor: 14, def: 2, ap: -1, attr: null },
-      { tag: 'Мастерская подгонка',   armor: 10, def: 6, ap: 1,  attr: { dex: 1 } },
-      { tag: 'Парад и война',         armor: 16, def: 8, ap: 0,  attr: { wil: 1 } }
-    ];
-    const ARM_LOOK = [
-      { vis: 'wraps', color: '#8a6a48' }, { vis: 'leather', color: '#9a7a50' },
-      { vis: 'scale', color: '#8f9aa6' },  { vis: 'chain', color: '#98a3ad' },
-      { vis: 'bracers', color: '#a9b3bd' },{ vis: 'plate', color: '#b0bac4' },
-      { vis: 'manica', color: '#c9a45c' }, { vis: 'lamellar', color: '#b08a4a' },
-      { vis: 'plate', color: '#c2ccd6' },  { vis: 'gold', color: '#e8c65f' }
-    ];
-
-    CLASS_ARMOR_SLOTS.forEach((slot, i) => {
-      const tier = CLASS_ITEM_TIERS[i];
-      const p = ARMOR_PROFILE[slot];
-      if (!p) return;
-      const f = ARMOR_TIER_F[tier];
-      const arch = ARM_ARCH[i];
-      const look = ARM_LOOK[i];
-      const names = gear.armor[slot] || [slot];
-      const noun = names[i % names.length];
-      const name = `${noun} «${cls.name}»`;
-
-      // Димахер щита не носит: его «леворучное» снаряжение — второй клинок.
-      if (slot === 'offhand' && clsId === 'dimachaerus') {
-        const prof = WEAPON_PROFILE.dual;
-        const dmgMin = Math.max(4, Math.round(prof.base[0] * f * 0.78 + tier));
-        const dmgMax = Math.max(dmgMin + 2, Math.round(prof.base[1] * f * 0.78 + tier));
-        const it = {
-          id: `cw_${clsId}_off${i + 1}`,
-          name, slot: 'weapon', cat: 'dual', tier,
-          shape: 'class',
-          dmgMin, dmgMax,
-          range: 1,
-          apCost: Math.max(1, prof.ap + arch.ap),
-          hitMod: Math.round(prof.hit + arch.hit + 2),
-          armorPen: Math.max(0.04, +(prof.pen + arch.pen).toFixed(2)),
-          twoHanded: false,
-          dualPair: true,
-          bothHands: false,
-          parryChance: (arch.parry || 0),
-          attrBonus: arch.attr ? { ...arch.attr } : null,
-          gearClass: 'class',
-          offhandOnly: true,
-          desc: `${arch.tag}. Второй клинок димахера — только в левую руку.`,
-          vis: Object.assign({}, CLASS_WEAPON_VIS.dual, {
-            len: Math.round(CLASS_WEAPON_VIS.dual.len * look.lenMul),
-            guard: look.guard, metal: look.metal, grip: look.grip, tip: look.tip
-          }),
-          clsOnly: clsId
-        };
-        it.weight = Math.round(weaponWeightOf(it) * 10) / 10;
-        it.price = Math.round(priceWeapon(it) * 1.25);
-        it.famePrice = Math.max(1, Math.round(it.price / 45));
-        it.req = reqForWeapon(it);
-        ITEMS_DB.push(it);
-        ITEM_MAP[it.id] = it;
-        return;
-      }
-
-      const it = {
-        id: `ca_${clsId}_${i + 1}`,
-        name, slot, cat: slot, tier,
-        vis: look.vis, color: look.color,
-        armor: Math.max(1, Math.round(p.armor[0] * f + arch.armor + tier * 2)),
-        apBonus: arch.ap || 0,
-        attrBonus: arch.attr ? { ...arch.attr } : null,
-        gearClass: 'class',
-        desc: `${arch.tag}. Доспех класса «${cls.name}».`,
-        clsOnly: clsId
-      };
-      if (p.def) it.defBonus = Math.max(0, Math.round(p.def[0] * f + (arch.def || 0) + Math.round(tier * 0.6)));
-      it.price = Math.round(priceArmor(it) * 1.2);
-      it.famePrice = Math.max(1, Math.round(it.price / 45));
-      it.req = reqForArmor(it);
-      ITEMS_DB.push(it);
-      ITEM_MAP[it.id] = it;
-    });
-  });
-})();
-
-function classItems(clsId) {
-  return ITEMS_DB.filter(i => i.clsOnly === clsId);
-}
+// ==================== СНАРЯЖЕНИЕ УНИВЕРСАЛЬНО ====================
+// Классовое снаряжение убрано из игры. Класс гладиатора влияет только
+// на характеристики и уникальные способности, но не на то, что он может надеть.
+function classItems() { return []; }
 
 // ==================== УНИКАЛЬНОСТЬ ХАРАКТЕРИСТИК ====================
 // Двух одинаковых оружий быть не должно: если у двух предметов совпал
@@ -1943,7 +1694,7 @@ function ensureUniqueWeaponStats() {
   // Цена и требования считаются уже от итоговых характеристик
   weapons.forEach(it => {
     if (it.bossItem) return;
-    it.price = it.clsOnly ? Math.round(priceWeapon(it) * 1.25) : priceWeapon(it);
+    it.price = priceWeapon(it);
     it.famePrice = Math.max(1, Math.round(it.price / 45));
   });
 }
@@ -2189,8 +1940,9 @@ const HELP_GUIDE = [
   },
   {
     icon: '👑', title: 'Боссы и сюжет',
-    text: 'Каждые 10 побед выходит босс — сильнее предыдущего, со своими способностями и магией. ' +
-          'После пятого босса вас ждёт Легенда Колизея. Его победа завершает историю.'
+    text: 'Боссы выходят один на один на 5-й, 20-й, 40-й, 65-й и 100-й победе — каждый сильнее предыдущего, ' +
+          'со своими способностями и магией. Уровень сложности в таком бою не выбирается: всё решает арена. ' +
+          'Победа над Легендой Колизея завершает историю.'
   },
   {
     icon: '🎲', title: 'Случайные события',
@@ -2263,12 +2015,12 @@ const HELP_FAQ = [
   { q: 'Как быстро поднять деньги?',
     a: 'Невыносимая сложность платит в 1,6 раза больше. Ещё помогают сундуки и события в городе. ' +
        'Но не рискуйте последним бойцом: если отряд погиб и денег нет — игра закончена.' },
-  { q: 'Чем отличается классовое снаряжение?',
-    a: 'В кузнице товары разложены на универсальное и классовое. Классовое чуть сильнее того же ' +
-       'тира, но надеть его может только боец своей школы арены.' },
-  { q: 'Почему димахеру нельзя щит?',
-    a: 'У димахера в каждой руке по клинку. Второй клинок можно взять вместо щита любому бойцу ' +
-       'с одноручным оружием, но димахеру щит недоступен вовсе.' },
+  { q: 'Снаряжение зависит от класса?',
+    a: 'Нет. Всё снаряжение универсальное: любой боец может надеть любую вещь, если хватает ' +
+       'характеристик. Класс даёт только бонусы к характеристикам и уникальную способность.' },
+  { q: 'Можно ли дать бойцу щит и второй клинок сразу?',
+    a: 'Нет. Левая рука держит либо щит, либо второй одноручный клинок. С парой клинков боец ' +
+       'бьёт быстрее и чаще, но теряет защиту щита.' },
   { q: 'Можно ли купить псу снаряжение?',
     a: 'Нет. Псы выходят на песок без брони и оружия — только зубы и порода. Зато они дешёвые и ' +
        'быстро качаются.' },

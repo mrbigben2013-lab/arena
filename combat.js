@@ -309,6 +309,37 @@ function applySkillBonus(u) {
   });
 }
 
+// ==================== ПОТЕРЯ РУКИ И ОРУЖИЕ ====================
+// Рука отрублена — оружие из неё падает, но не пропадает: оно уходит
+// в инвентарь. Удар потерянной рукой (или кулаком без руки) бьёт на 1.
+function dropWeaponFromLimb(glad, limbId) {
+  if (!glad || glad.isDog || !glad.equip) return;
+  const slots = [];
+  if (limbId === 'armR') slots.push('weapon');
+  if (limbId === 'armL') slots.push('offhand');
+  slots.forEach(slot => {
+    const it = glad.equip[slot];
+    if (!it) return;
+    glad.equip[slot] = null;
+    if (typeof STATE !== 'undefined' && STATE.inventory) {
+      STATE.inventory.push(Object.assign({}, it, {
+        uid: it.uid || ('i_' + Math.random().toString(36).substr(2, 9))
+      }));
+    }
+    if (typeof addLog === 'function') {
+      addLog(`🗡️ <b>${glad.name}</b> роняет «${it.name}» — оружие подобрано и лежит в складе.`, 'log-warn');
+    }
+  });
+}
+
+// Бьёт ли боец рукой, которой у него уже нет
+function strikesWithLostArm(u) {
+  if (!u || !u.glad || u.glad.isDog) return false;
+  const L = u.glad.limbs || {};
+  if (u.hand === 'left') return !!(L.armL && L.armL.lost);
+  return !!(L.armR && L.armR.lost);
+}
+
 // Штрафы за утраченные конечности
 function recalcUnit(u) {
   const L = u.limbs || {};
@@ -422,10 +453,18 @@ function enemyStepsFor(count) {
 }
 
 // ==================== БОСС АРЕНЫ ====================
-// Каждый 10-й победный бой — босс. Сложность босса задаёт игрок,
-// но сам босс всегда один и тот же по сюжету.
+// Босс выходит один на один: никакой свиты, никаких прислужников.
+// Сложность босс-боя фиксирована — игрок её не выбирает, всё решает
+// лестница боссов (5 / 20 / 40 / 65 / 100 побед).
+const BOSS_TIER_ID = 'mid';
+
+function bossFightTier() {
+  return ARENA_TIERS.find(t => t.id === BOSS_TIER_ID) || ARENA_TIERS[1];
+}
+
 function buildBossMatch(boss, tierId) {
-  const tier = ARENA_TIERS.find(t => t.id === tierId) || ARENA_TIERS[1];
+  // Сложность игнорируется: у босса всегда свой, фиксированный бой
+  const tier = bossFightTier();
   const arena = rollArena(STATE.lastArenaId);
   const eq = boss.equip || {};
 
@@ -433,34 +472,19 @@ function buildBossMatch(boss, tierId) {
     name: boss.name,
     title: boss.title,
     role: 'melee',
-    hp: Math.round(boss.hp * (0.9 + tier.power * 0.1)),
-    atk: Math.round(boss.atk * (0.92 + tier.power * 0.08)),
-    def: Math.round(boss.def * (0.94 + tier.power * 0.06)),
+    hp: Math.round(boss.hp),
+    atk: Math.round(boss.atk),
+    def: Math.round(boss.def),
     agi: boss.agi,
     boss: true,
     bossId: boss.id,
     aura: boss.aura,
     look: boss.look,
-    abilities: boss.abilities || [],
+    abilities: (boss.abilities || []).map(a => ({ ...a })),
     wId: eq.wId, bId: eq.bId, hId: eq.hId, aId: eq.aId, lId: eq.lId, oId: eq.oId
   };
 
-  // Свита: на низкой сложности босс выходит с двумя прислужниками,
-  // на средней — с одним, на невыносимой — один на один.
-  const ti = tierIndex(tierId);
-  const escorts = ti === 0 ? 2 : ti === 1 ? 1 : 0;
   const units = [unit];
-  if (escorts > 0) {
-    const esc = ENEMY_TEMPLATES.bruisers.slice(0, escorts).map(u => ({
-      ...u,
-      hp: Math.round(u.hp * tier.power),
-      atk: Math.round(u.atk * tier.power),
-      def: Math.round(u.def * tier.power)
-    }));
-    units.push(...esc);
-  }
-
-  const steps = units.length >= 3 ? [9, 12, 14] : units.length === 2 ? [10, 13] : [12];
 
   return {
     arena, tier,
@@ -469,10 +493,10 @@ function buildBossMatch(boss, tierId) {
     boss,
     isBossFight: true,
     units,
-    enemySteps: steps,
-    gold: Math.round((120 + boss.winAt * 12) * tier.goldMul),
-    xp: Math.round((90 + boss.winAt * 8) * tier.xpMul),
-    fame: Math.round((18 + boss.winAt * 2) * tier.fameMul)
+    enemySteps: [12],
+    gold: Math.round(120 + boss.winAt * 12),
+    xp: Math.round(90 + boss.winAt * 8),
+    fame: Math.round(18 + boss.winAt * 2)
   };
 }
 
@@ -543,18 +567,31 @@ function squadFighters() {
   ).filter(Boolean);
 }
 
+// Босс может прийти и объектом, и строкой id — приводим к объекту.
+function resolveBossRef(ref) {
+  if (!ref) return null;
+  if (typeof ref === 'object') return ref;
+  if (typeof ref === 'string' && typeof BOSS_LADDER !== 'undefined') {
+    return BOSS_LADDER.find(b => b.id === ref) || null;
+  }
+  return null;
+}
+
 function openDeploy(tierId, boss) {
   const squad = squadFighters();
   if (!squad.length) return alert('Сначала соберите отряд!');
   if (squad.some(g => g.hp <= 0)) return alert('В отряде есть тяжелораненый боец. Вылечите его в храме.');
 
-  DEPLOY.tierId = tierId;
-  DEPLOY.boss = boss || null;
+  const bossObj = resolveBossRef(boss);
+  if (boss && !bossObj) return alert('Не удалось найти босса. Попробуйте обновить экран арены.');
+
+  DEPLOY.tierId = bossObj ? BOSS_TIER_ID : tierId;
+  DEPLOY.boss = bossObj;
   DEPLOY.arenaId = null;
   DEPLOY.slots = [7, 5, 3].slice(0, Math.max(1, squad.length));
   DEPLOY.picked = 0;
   // Матч фиксируем здесь: арена и противник не должны меняться при перерисовке
-  DEPLOY.match = buildMatch(null, tierId, boss || null);
+  DEPLOY.match = buildMatch(null, DEPLOY.tierId, bossObj);
   if (!DEPLOY.match) return alert('Не удалось подобрать бой.');
 
   const modal = document.getElementById('deploy-modal');
@@ -1339,6 +1376,7 @@ function dealAbilityDamage(attacker, defender, limbId, raw, color, quiet, penBon
       dmg += Math.round(raw * 0.4);
       addFloat(defender, `${limbDef.icon} ОТРУБЛЕНО`, '#ff2b2b', true);
       addLog(`🩸 <b>${defender.glad.name}</b> теряет ${limbDef.name.toLowerCase()}!`, 'log-crit');
+      if (limb === 'armL' || limb === 'armR') dropWeaponFromLimb(defender.glad, limb);
       recalcUnit(defender);
     }
   }
@@ -1506,6 +1544,32 @@ function isWoundedUnit(u) {
   if (!u || !u.glad) return false;
   const pct = u.glad.hp / Math.max(1, u.glad.maxHp);
   return pct <= 0.35;
+}
+
+// ==================== ПОБЕГ ПРИ МАЛОМ ЗДОРОВЬЕ ====================
+// Уходить с песка может любой боец — и наш, и вражеский. Но только
+// действительно при смерти (22% здоровья и ниже) и с небольшим шансом:
+// раз в секунду бросается кубик, обычно 8%. Псы не бегут никогда.
+const FLEE_HP_PCT = 0.22;
+const FLEE_CHANCE_PER_SEC = 0.08;
+
+function canFleeByHealth(u) {
+  if (!u || !u.alive || u.fled || !u.glad) return false;
+  if (u.glad.isDog) return false;
+  if (u.boss) return false;              // босс не покидает песок
+  return (u.glad.hp / Math.max(1, u.glad.maxHp)) <= FLEE_HP_PCT;
+}
+
+// Бросаем кубик раз в секунду для каждого тяжелораненого бойца
+function tickFleeRoll(u, dt) {
+  if (!canFleeByHealth(u)) { u.fleeAcc = 0; return; }
+  u.fleeAcc = (u.fleeAcc || 0) + dt;
+  if (u.fleeAcc < 1) return;
+  u.fleeAcc = 0;
+  if (Math.random() < FLEE_CHANCE_PER_SEC) {
+    fleeArena(u);
+    checkTeamWipe();
+  }
 }
 
 // Псы умеют перепрыгивать СВОИХ: зверь перемахивает союзника и встаёт
@@ -1691,6 +1755,13 @@ function performAttack(attacker, defender, limbId, isHeavy, weaponOverride) {
   let hpDmg = dmg.hp;
   let armorDmg = dmg.armor;
 
+  // Бьёт рукой, которой уже нет (или пустой культёй) — урон ровно 1
+  const armGone = strikesWithLostArm(attacker);
+  if (armGone) {
+    hpDmg = 1;
+    armorDmg = 0;
+  }
+
   let blocked = false;
   const blockChance = defender.blockChance + (defender.stance === 'block' ? 30 : 0);
   if (blockChance > 0 && Math.random() * 100 < blockChance && limb !== 'torso') blocked = true;
@@ -1722,6 +1793,11 @@ function performAttack(attacker, defender, limbId, isHeavy, weaponOverride) {
     }
   } else if (st && st.lost) {
     hpDmg = Math.round(hpDmg * 1.35);
+  }
+
+  // Руку отрубили — оружие из неё падает в инвентарь
+  if (limbBroke && (limb === 'armL' || limb === 'armR')) {
+    dropWeaponFromLimb(defender.glad, limb);
   }
 
   if (limb === 'head') defender.armorHead = Math.max(0, defender.armorHead - armorDmg);
@@ -1780,8 +1856,14 @@ function fleeArena(u) {
   u.fled = true;
   u.alive = false;
   u.stepLock = true;
-  addFloat(u, 'ПОКИНУЛ АРЕНУ', '#9ec5ff', true);
-  addLog(`🏃 <b>${u.glad.name}</b> уходит с песка, сохраняя жизнь.`, 'log-warn');
+  if (u.side === 'enemy') {
+    addFloat(u, 'БЕЖИТ', '#ffd98a', true);
+    addLog(`🏃 <b>${u.glad.name}</b> бежит с арены, бросив оружие.`, 'log-win');
+    sfx('miss');
+  } else {
+    addFloat(u, 'ПОКИНУЛ АРЕНУ', '#9ec5ff', true);
+    addLog(`🏃 <b>${u.glad.name}</b> уходит с песка, сохраняя жизнь.`, 'log-warn');
+  }
   if (COMBAT.activeId === u.id) COMBAT.activeId = null;
   if (COMBAT.menu && COMBAT.menu.unitId === u.id) COMBAT.menu = null;
 }
@@ -1977,6 +2059,12 @@ function clickerTick(dt) {
   const now = performance.now();
   const STEP_TIME = 0.34; // секунд на клетку
 
+  // Побег по здоровью: и наши, и враги бросают кубик раз в секунду
+  COMBAT.units.forEach(u => {
+    if (u.alive && !u.fled) tickFleeRoll(u, dt);
+  });
+  if (COMBAT.over) return;
+
   // Мои бойцы: подходят к ближайшему врагу.
   // В автобое раненый отходит назад, перепрыгивая своих.
   playerUnitsAlive().forEach(u => {
@@ -2048,6 +2136,33 @@ function clickerTick(dt) {
   // Лучники и копейщики врага тоже переступают через своих,
   // чтобы не толкаться в строю.
   COMBAT.units.filter(u => u.alive && u.side === 'enemy').forEach(e => {
+    // Босс: в кликер-бою у него свой ритм магии. Способности идут
+    // по таймеру независимо от обычного кулдауна удара.
+    if (e.boss && e.abilities && e.abilities.length) {
+      // Кулдауны способностей тикают временем: в кликер-бою нет раундов
+      e.abilities.forEach(a => {
+        if (a.cdLeft > 0) a.cdLeft = Math.max(0, a.cdLeft - dt * 0.55);
+      });
+      if (!e.casting) {
+        if (e.abilityTimer == null) e.abilityTimer = 3200;
+        e.abilityTimer -= dt * 1000;
+        if (e.abilityTimer <= 0) {
+          const ab = bossAbilityReady(e);
+          if (ab) {
+            e.casting = true;
+            e.abilityTimer = 5200 + Math.random() * 2600;
+            useBossAbility(e, ab).then(() => {
+              e.casting = false;
+              updateCombatHUD();
+              checkTeamWipe();
+            });
+            return;
+          }
+          e.abilityTimer = 900;
+        }
+      }
+    }
+
     const target = pickTarget(e);
     if (!target) {
       const foe = nearestEnemy(e);

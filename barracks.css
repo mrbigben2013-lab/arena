@@ -212,6 +212,55 @@
 .bi-btn:disabled { opacity: .35; cursor: default; }
 .bi-btn:disabled:hover { border-color: #5a4630; color: var(--text); }
 
+/* ================= ТУЛТИП ПРЕДМЕТА ================= */
+.item-tip {
+  position: fixed;
+  z-index: 9999;
+  width: 268px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity .12s ease, transform .12s ease;
+  background: linear-gradient(180deg, rgba(34,27,20,.98), rgba(14,12,9,.99));
+  border: 1px solid #8a6d3f;
+  border-radius: 5px;
+  padding: 9px 11px 10px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.72), inset 0 1px 0 rgba(255,220,160,.09);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text);
+}
+.item-tip.show { opacity: 1; transform: translateY(0); }
+.item-tip .it-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 6px; margin-bottom: 1px;
+}
+.item-tip .it-name { font-size: 12px; font-weight: 800; color: #ffe0a8; line-height: 1.2; }
+.item-tip .tier-badge { font-size: 8px; padding: 1px 4px; flex-shrink: 0; }
+.item-tip .it-slot {
+  font-size: 8.5px; text-transform: uppercase; letter-spacing: .09em;
+  color: #8a7a62; margin-bottom: 6px;
+}
+.item-tip .it-main { font-size: 11px; margin-bottom: 2px; }
+.item-tip .it-main b { color: #ffd166; font-size: 12.5px; }
+.item-tip .it-line { font-size: 9.5px; color: #c9bda8; }
+.item-tip .it-line b { color: #e8dcc0; }
+.item-tip .it-dim { color: #8a7a62; }
+.item-tip .it-cmp {
+  margin-top: 5px; padding-top: 5px; font-size: 9.5px;
+  border-top: 1px dashed rgba(138,109,63,.4); color: #b9a488;
+}
+.item-tip .it-up { color: #8fd19e; font-weight: 700; }
+.item-tip .it-down { color: #d9705f; font-weight: 700; }
+.item-tip .it-req-row { margin-top: 5px; font-size: 9px; color: #a89880; display: flex; flex-wrap: wrap; gap: 5px; }
+.item-tip .it-have { opacity: .65; font-weight: 400; }
+.item-tip .it-desc {
+  margin-top: 6px; padding-top: 6px; font-size: 9px; font-style: italic;
+  color: #9a8c76; border-top: 1px solid rgba(90,70,48,.45); line-height: 1.4;
+}
+.item-tip .it-price { margin-top: 5px; font-size: 9px; color: #8a7a62; }
+.item-tip .it-price b { color: #ffd166; }
+
 @media (max-width: 820px) {
   .barracks-wrap {
     grid-template-columns: 1fr;

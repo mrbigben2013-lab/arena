@@ -199,7 +199,27 @@ const SFX = (() => {
     },
     error() {
       tone({ freq: 180, to: 130, type: 'square', dur: 0.16, gain: 0.05 });
-    }
+    },
+    // ---------- тренировка: ритм ----------
+    beat() {
+      noise({ dur: 0.07, gain: 0.06, type: 'lowpass', freq: 420, to: 180, q: 0.9 });
+    },
+    beatStrong() {
+      noise({ dur: 0.1, gain: 0.1, type: 'lowpass', freq: 520, to: 160, q: 1 });
+      tone({ freq: 96, to: 62, type: 'sine', dur: 0.18, gain: 0.09 });
+    },
+    rhythmHit() {
+      tone({ freq: 880, to: 1180, type: 'triangle', dur: 0.09, gain: 0.05 });
+      noise({ dur: 0.08, gain: 0.09, type: 'bandpass', freq: 1800, q: 1.6 });
+    },
+    rhythmMiss() {
+      tone({ freq: 220, to: 140, type: 'square', dur: 0.14, gain: 0.045 });
+      noise({ dur: 0.12, gain: 0.05, type: 'lowpass', freq: 700, to: 260, q: 0.8 });
+    },
+    melody1() { tone({ freq: 523.25, type: 'sine', dur: 0.22, gain: 0.026 }); },
+    melody2() { tone({ freq: 587.33, type: 'sine', dur: 0.22, gain: 0.026 }); },
+    melody3() { tone({ freq: 659.25, type: 'sine', dur: 0.22, gain: 0.026 }); },
+    melody4() { tone({ freq: 783.99, type: 'sine', dur: 0.22, gain: 0.026 }); }
   };
 
   function play(name) {

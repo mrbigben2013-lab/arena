@@ -1,4 +1,4 @@
-// ==================== ОТРИСОВКА ГЛАДИАТОРОВ ====================
+﻿// ==================== ОТРИСОВКА ГЛАДИАТОРОВ ====================
 // Стиль Swords & Sandals: крупная голова, толстые конечности, жирный контур,
 // два тона на объём. Всё векторно. Конечности можно потерять — они исчезают.
 
@@ -263,6 +263,8 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
     ctx.moveTo(-shoulder * 0.5, hipY - 34); ctx.quadraticCurveTo(-6, hipY - 30, -2, hipY - 32);
     ctx.moveTo(shoulder * 0.5, hipY - 34); ctx.quadraticCurveTo(6, hipY - 30, 2, hipY - 32);
     ctx.stroke();
+    // Голая кожа — видно татуировки и раскраску
+    drawBodyCosmetics(ctx, glad, shoulder, waist, hipY);
   } else {
     drawBodyArmorDetail(ctx, eq.body, shoulder, waist, hipY);
   }
@@ -345,6 +347,7 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
     ctx.translate(shoulder * 0.86, hipY - 42);
     ctx.rotate(swingAngle);
     limb(ctx, 0, 0, 6, 24, 12, eq.arms ? eq.arms.color : skin);
+    drawArmSchoolDetail(ctx, eq.arms, 3, 12);
     ctx.fillStyle = eq.arms ? shade(eq.arms.color, 0.1) : skin;
     ctx.strokeStyle = OUTLINE;
     ctx.lineWidth = 3.5;
@@ -415,6 +418,7 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
     ctx.translate(-shoulder * 0.86, hipY - 42);
     ctx.rotate(-0.15 - shieldLift + armWalkL);
     limb(ctx, 0, 0, -6, 26, 12, eq.arms ? eq.arms.color : skin);
+    drawArmSchoolDetail(ctx, eq.arms, -3, 13);
     ctx.fillStyle = eq.arms ? shade(eq.arms.color, 0.1) : skin;
     ctx.strokeStyle = OUTLINE;
     ctx.lineWidth = 3.5;
@@ -510,7 +514,9 @@ function drawLegArmorNew(ctx, legs, legColor, geoms) {
   const vis = legs.vis;
   const plate = ['greaves', 'plate', 'gold', 'sandals', 'boots'].includes(vis);
   const wrap = ['wraps', 'chain', 'scale'].includes(vis);
-  if (!plate && !wrap) return;
+  // Новые школы: у каждой своя фактура на голени
+  const school = ['medieval', 'china', 'rus', 'mongol'].includes(vis);
+  if (!plate && !wrap && !school) return;
 
   ctx.strokeStyle = OUTLINE;
   ctx.lineWidth = 3;
@@ -520,7 +526,7 @@ function drawLegArmorNew(ctx, legs, legColor, geoms) {
     const kneeX = (g.hipX + g.footX) / 2 + 3.4 + (g.lift || 0) * 7.5;
     const kneeY = (g.hipY + g.footY) / 2 + 1 - (g.lift || 0) * 2.4;
 
-    if (plate) {
+    if (plate || school) {
       // Понож надевается на голень: от колена до стопы
       ctx.save();
       ctx.translate(kneeX, kneeY);
@@ -530,7 +536,65 @@ function drawLegArmorNew(ctx, legs, legColor, geoms) {
       ctx.fillStyle = shade(legColor, 0.2);
       roundRect(ctx, -2, -8, len, 16, 5);
       ctx.fill(); ctx.stroke();
-      if (vis === 'plate' || vis === 'gold') {
+
+      if (school) {
+        const trim = legs.trim || '#c9a45c';
+        if (vis === 'medieval') {
+          // Кованая створка с наколенником и ремнём
+          ctx.fillStyle = 'rgba(255,255,255,0.3)';
+          roundRect(ctx, 1, -6, len * 0.55, 4, 2);
+          ctx.fill();
+          ctx.fillStyle = shade(legColor, 0.3);
+          ctx.strokeStyle = OUTLINE;
+          ctx.lineWidth = 2.2;
+          ctx.beginPath();
+          ctx.arc(2, -8, 5.4, 0, Math.PI * 2);
+          ctx.fill(); ctx.stroke();
+          ctx.fillStyle = trim;
+          roundRect(ctx, 2, -2, len * 0.8, 3, 1.5);
+          ctx.fill();
+        } else if (vis === 'china') {
+          // Ряды лаковых пластин
+          ctx.fillStyle = trim;
+          for (let i = 0; i < 3; i++) {
+            roundRect(ctx, 1 + i * (len * 0.26), -6, len * 0.2, 3, 1.2);
+            ctx.fill();
+            roundRect(ctx, 1 + i * (len * 0.26), 3, len * 0.2, 3, 1.2);
+            ctx.fill();
+          }
+          ctx.fillStyle = 'rgba(255,255,255,0.24)';
+          roundRect(ctx, 1, -6, len * 0.5, 2, 1);
+          ctx.fill();
+        } else if (vis === 'rus') {
+          // Кольчужная рябь и медная бляха
+          ctx.strokeStyle = shade(legColor, -0.3);
+          ctx.lineWidth = 1.1;
+          for (let i = 1; i < 5; i++) {
+            const x = (len * i) / 5;
+            ctx.beginPath();
+            ctx.moveTo(x, -7);
+            ctx.lineTo(x + 2, 7);
+            ctx.stroke();
+          }
+          ctx.fillStyle = trim;
+          ctx.strokeStyle = OUTLINE;
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.arc(2, 0, 3.2, 0, Math.PI * 2);
+          ctx.fill(); ctx.stroke();
+        } else {
+          // Монгольские кожаные накладки с меховым краем
+          ctx.fillStyle = shade(legColor, -0.2);
+          roundRect(ctx, 1, -5, len * 0.8, 10, 3);
+          ctx.fill();
+          ctx.fillStyle = '#b8a888';
+          roundRect(ctx, 1, 5, len * 0.8, 3.4, 1.6);
+          ctx.fill();
+          ctx.fillStyle = trim;
+          roundRect(ctx, len * 0.35, -2, 3.4, 4, 1.4);
+          ctx.fill();
+        }
+      } else if (vis === 'plate' || vis === 'gold') {
         ctx.fillStyle = 'rgba(255,255,255,0.3)';
         roundRect(ctx, 1, -6, len * 0.5, 4, 2);
         ctx.fill();
@@ -1414,6 +1478,66 @@ function helmetCrest(ctx, crest, headY, headR) {
   }
 }
 
+// Детали наручей новых школ: рисуются в системе руки (предплечье вдоль оси Y)
+function drawArmSchoolDetail(ctx, arms, hx, hy) {
+  if (!arms) return;
+  const vis = arms.vis;
+  if (!['medieval', 'china', 'rus', 'mongol'].includes(vis)) return;
+  const trim = arms.trim || '#c9a45c';
+  ctx.save();
+  ctx.translate(hx * 0.75, hy - 8);
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 2.2;
+  if (vis === 'medieval') {
+    // Стальная створка с фаской и ремнём
+    ctx.fillStyle = shade(arms.color, 0.22);
+    roundRect(ctx, -6, -7, 12, 14, 4);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    roundRect(ctx, -4, -5, 3, 9, 1.5);
+    ctx.fill();
+    ctx.fillStyle = trim;
+    roundRect(ctx, -6, 2, 12, 2.6, 1.2);
+    ctx.fill();
+  } else if (vis === 'china') {
+    // Лаковые пластины с золотыми заклёпками
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = i % 2 ? shade(arms.color, -0.1) : shade(arms.color, 0.12);
+      roundRect(ctx, -6, -7 + i * 5, 12, 4.4, 1.6);
+      ctx.fill(); ctx.stroke();
+    }
+    ctx.fillStyle = trim;
+    ctx.beginPath(); ctx.arc(0, -4.8, 1.1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(0, 4.8, 1.1, 0, Math.PI * 2); ctx.fill();
+  } else if (vis === 'rus') {
+    // Кольчужные кольца и медная бляха
+    ctx.strokeStyle = shade(arms.color, -0.3);
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(-6, -5 + i * 5);
+      ctx.lineTo(6, -4 + i * 5);
+      ctx.stroke();
+    }
+    ctx.fillStyle = trim;
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.arc(0, 0, 2.8, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  } else {
+    // Кожа с меховой опушкой
+    ctx.fillStyle = shade(arms.color, -0.12);
+    roundRect(ctx, -6, -7, 12, 14, 3);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#b8a888';
+    roundRect(ctx, -6, -8, 12, 3.4, 1.6);
+    ctx.fill();
+    ctx.fillStyle = trim;
+    roundRect(ctx, -1.6, 1, 3.2, 4, 1.2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawHelmet(ctx, helm, headY, headR) {
   const hc = helm.color || '#b0bac4';
   const vis = helm.vis || 'nasal';
@@ -1719,6 +1843,128 @@ function drawHelmet(ctx, helm, headY, headR) {
     ctx.moveTo(-headR * 0.7, headY - 26);
     ctx.lineTo(-headR * 0.5, headY - 30);
     ctx.stroke();
+    return;
+  }
+
+  if (vis === 'hanhelm') {
+    // Ханьский колпак: лаковая шапочка с широким назатыльником и шипом
+    ctx.fillStyle = metalFill(ctx, hc, headY - 30, headY + 6);
+    ctx.beginPath();
+    ctx.moveTo(-headR - 2, headY + 2);
+    ctx.quadraticCurveTo(-headR - 4, headY - 26, 0, headY - 30);
+    ctx.quadraticCurveTo(headR + 4, headY - 26, headR + 2, headY + 2);
+    ctx.quadraticCurveTo(0, headY + 8, -headR - 2, headY + 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Лаковая полоса по низу и золотая кромка
+    ctx.fillStyle = helm.trim || '#e2b65a';
+    roundRect(ctx, -headR - 2, headY - 4, headR * 2 + 4, 4, 2);
+    ctx.fill();
+    // Шип на макушке
+    ctx.fillStyle = shade(hc, 0.25);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(-4, headY - 28);
+    ctx.lineTo(0, headY - 40);
+    ctx.lineTo(4, headY - 28);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Бархатная кисточка сзади
+    ctx.strokeStyle = helm.trim || '#e2b65a';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(headR * 0.55 + i * 2, headY - 18);
+      ctx.quadraticCurveTo(headR * 0.8 + i * 3, headY - 6, headR * 0.6 + i * 3, headY + 6);
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    ctx.beginPath();
+    ctx.ellipse(-9, headY - 20, 7, 5, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+
+  if (vis === 'rushelm') {
+    // Русский шелом: высокий купол с навершием, бармица по бокам
+    ctx.fillStyle = metalFill(ctx, hc, headY - 36, headY + 8);
+    ctx.beginPath();
+    ctx.moveTo(-headR - 1, headY + 1);
+    ctx.quadraticCurveTo(-headR - 3, headY - 18, -6, headY - 34);
+    ctx.quadraticCurveTo(0, headY - 40, 6, headY - 34);
+    ctx.quadraticCurveTo(headR + 3, headY - 18, headR + 1, headY + 1);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Навершие-шишак
+    ctx.fillStyle = helm.trim || '#c9a45c';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(0, headY - 39, 3.2, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // Кромка-обруч
+    ctx.fillStyle = shade(hc, -0.3);
+    roundRect(ctx, -headR - 1, headY - 3, headR * 2 + 2, 5, 2);
+    ctx.fill();
+    // Бармица: кольчужная сетка по бокам
+    ctx.strokeStyle = shade(hc, -0.25);
+    ctx.lineWidth = 1.3;
+    [-1, 1].forEach(sd => {
+      for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(sd * (headR - 1), headY + 1 + i * 4);
+        ctx.lineTo(sd * (headR - 8), headY + 3 + i * 4);
+        ctx.stroke();
+      }
+    });
+    ctx.fillStyle = 'rgba(255,255,255,0.32)';
+    ctx.beginPath();
+    ctx.ellipse(-8, headY - 22, 6, 10, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+
+  if (vis === 'mongolhelm') {
+    // Монгольский шлем: купол на кожаной основе, меховой обод, наносник
+    ctx.fillStyle = metalFill(ctx, hc, headY - 28, headY + 4);
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 4, headR + 1, headR * 0.98, 0, Math.PI, 0);
+    ctx.lineTo(headR + 1, headY + 3);
+    ctx.lineTo(-headR - 1, headY + 3);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Меховой обод: рыхлая полоса
+    ctx.fillStyle = '#b8a888';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(-headR - 3, headY + 3);
+    for (let i = 0; i <= 6; i++) {
+      const t = i / 6;
+      const px = -headR - 3 + (headR * 2 + 6) * t;
+      ctx.quadraticCurveTo(px + 2, headY + 9, px + 5, headY + 3);
+    }
+    ctx.lineTo(headR + 3, headY - 2);
+    ctx.lineTo(-headR - 3, headY - 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Наносник и кожаный ремешок
+    ctx.fillStyle = shade(hc, -0.2);
+    roundRect(ctx, -2.5, headY - 2, 5, 16, 2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = helm.trim || '#5a4a2e';
+    roundRect(ctx, -headR - 2, headY - 8, headR * 2 + 4, 4, 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.26)';
+    ctx.beginPath();
+    ctx.ellipse(-9, headY - 18, 7, 5, -0.45, 0, Math.PI * 2);
+    ctx.fill();
+    return;
   }
 }
 
@@ -1734,7 +1980,7 @@ const ARMOR_TIER_STYLE = {
 };
 
 const METAL_VIS = ['mail', 'chain', 'scale', 'dragon', 'lamellar', 'splint',
-  'plate', 'lorica', 'imperial', 'bronze', 'manica', 'greaves', 'gold', 'bracers'];
+  'plate', 'lorica', 'imperial', 'bronze', 'manica', 'greaves', 'gold', 'bracers', 'medieval', 'rus'];
 
 function hex2rgb(hex) {
   if (!hex || hex[0] !== '#') return { r: 140, g: 120, b: 100 };
@@ -2129,6 +2375,198 @@ function drawBodyArmorDetail(ctx, body, shoulder, waist, hipY) {
     }
     sheen(-9, hipY - 38, 8, 6, -0.4);
     hem(hipY - 5, 4);
+  } else if (vis === 'medieval') {
+    // Рыцарский доспех: цельная кираса, наплечники и ремень с бляхой
+    const edge = pal.deep;
+    // Наплечники — две выпуклые створки
+    [-1, 1].forEach(sd => {
+      ctx.fillStyle = shade(c, 0.18);
+      ctx.strokeStyle = edge;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.ellipse(sd * shoulder * 0.78, hipY - 46, 11, 8, sd * 0.35, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(sd * shoulder * 0.78, hipY - 46, 7, Math.PI * 1.05, Math.PI * 1.6);
+      ctx.stroke();
+    });
+    // Грудная пластина с осевым ребром
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(0, hipY - 46);
+    ctx.quadraticCurveTo(3, hipY - 26, 0, hipY - 8);
+    ctx.stroke();
+    // Рёбра жёсткости по бокам
+    ctx.lineWidth = 1.8;
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.moveTo(sd * shoulder * 0.5, hipY - 44);
+      ctx.quadraticCurveTo(sd * shoulder * 0.72, hipY - 24, sd * shoulder * 0.56, hipY - 8);
+      ctx.stroke();
+    });
+    // Латы на животе: две горизонтальные полосы
+    for (let i = 0; i < 2; i++) {
+      const yy = hipY - 22 + i * 8;
+      ctx.strokeStyle = edge;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(-waist + 3, yy);
+      ctx.quadraticCurveTo(0, yy + 3, waist - 3, yy);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(-waist + 4, yy - 1.6);
+      ctx.quadraticCurveTo(0, yy + 1.4, waist - 4, yy - 1.6);
+      ctx.stroke();
+    }
+    // Ремень и бляха
+    ctx.fillStyle = '#5a3f22';
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 1.6;
+    roundRect(ctx, -waist, hipY - 13, waist * 2, 6, 2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.trim;
+    ctx.beginPath(); ctx.arc(0, hipY - 10, 3.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // Плюмаж-накидка по цвету отделки на груди
+    ctx.fillStyle = hexA(body.trim || '#c0392b', 0.85);
+    ctx.beginPath();
+    ctx.moveTo(-9, hipY - 46);
+    ctx.lineTo(9, hipY - 46);
+    ctx.lineTo(6, hipY - 34);
+    ctx.lineTo(-6, hipY - 34);
+    ctx.closePath();
+    ctx.fill();
+    sheen(-11, hipY - 36, 7, 9, -0.4);
+    hem(hipY - 5, 4);
+  } else if (vis === 'china') {
+    // Ханьский ламелляр: красный лак, ряды пластин, пояс с драконом
+    for (let row = 0; row < 6; row++) {
+      for (let i = -3; i <= 3; i++) {
+        const px = i * 9 - 4;
+        const py = hipY - 46 + row * 8;
+        ctx.fillStyle = row % 2 ? shade(c, 0.1) : shade(c, -0.08);
+        ctx.strokeStyle = pal.deep;
+        ctx.lineWidth = 1.4;
+        roundRect(ctx, px, py, 8, 7, 1.6);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = pal.trim;
+        ctx.beginPath();
+        ctx.arc(px + 4, py + 3.4, 0.9, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // Пояс с золотой накладкой-драконом
+    ctx.fillStyle = '#3a2418';
+    ctx.strokeStyle = pal.deep;
+    ctx.lineWidth = 1.8;
+    roundRect(ctx, -waist, hipY - 16, waist * 2, 7, 2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.trim;
+    ctx.beginPath();
+    ctx.moveTo(-9, hipY - 12);
+    ctx.quadraticCurveTo(-3, hipY - 17, 2, hipY - 12);
+    ctx.quadraticCurveTo(6, hipY - 9, 10, hipY - 13);
+    ctx.lineTo(10, hipY - 10);
+    ctx.quadraticCurveTo(4, hipY - 6, -2, hipY - 9);
+    ctx.closePath();
+    ctx.fill();
+    // Воротник-стойка
+    ctx.fillStyle = shade(c, 0.2);
+    ctx.strokeStyle = pal.deep;
+    ctx.lineWidth = 1.8;
+    roundRect(ctx, -12, hipY - 50, 24, 7, 2);
+    ctx.fill(); ctx.stroke();
+    sheen(-11, hipY - 36, 6, 9, -0.4);
+    hem(hipY - 5, 4);
+  } else if (vis === 'rus') {
+    // Русская кольчуга: плетение с медными вставками и поясом
+    const step = 6.4;
+    for (let yy = hipY - 46; yy < hipY; yy += step) {
+      for (let xx = -shoulder; xx < shoulder; xx += step) {
+        const off = (Math.round((yy - hipY) / step) % 2) ? step / 2 : 0;
+        ctx.strokeStyle = pal.deep;
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.arc(xx + off, yy, step * 0.36, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    // Медные вставки-бляхи на груди
+    ctx.fillStyle = pal.trim;
+    ctx.strokeStyle = pal.deep;
+    ctx.lineWidth = 1.2;
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.ellipse(sd * shoulder * 0.42, hipY - 32, 4.4, 5.4, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    });
+    // Ворот и подол
+    ctx.strokeStyle = pal.deep;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-shoulder + 3, hipY - 45);
+    ctx.quadraticCurveTo(0, hipY - 40, shoulder - 3, hipY - 45);
+    ctx.stroke();
+    // Ремень
+    ctx.fillStyle = '#4a2e1c';
+    ctx.lineWidth = 1.6;
+    roundRect(ctx, -waist, hipY - 15, waist * 2, 6, 2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.trim;
+    ctx.beginPath(); ctx.arc(0, hipY - 12, 3, 0, Math.PI * 2); ctx.fill();
+    sheen(-11, hipY - 38, 6, 8, -0.4);
+    hem(hipY - 5, 4);
+  } else if (vis === 'mongol') {
+    // Монгольский хатанга: кожаная основа, стальные накладки, меховой ворот
+    ctx.fillStyle = shade(c, -0.06);
+    roundRect(ctx, -waist, hipY - 48, waist * 2, 44, 6);
+    ctx.fill();
+    // Стальные накладки-полосы
+    for (let i = 0; i < 4; i++) {
+      const yy = hipY - 44 + i * 10;
+      ctx.fillStyle = shade('#9aa6b2', -0.05 + (i % 2) * 0.08);
+      ctx.strokeStyle = pal.deep;
+      ctx.lineWidth = 1.6;
+      roundRect(ctx, -waist + 4, yy, waist * 2 - 8, 7, 3);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      roundRect(ctx, -waist + 6, yy + 1.2, (waist * 2 - 12) * 0.5, 2, 1);
+      ctx.fill();
+    }
+    // Меховой воротник
+    ctx.fillStyle = '#b8a888';
+    ctx.strokeStyle = pal.deep;
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(-shoulder * 0.9, hipY - 47);
+    for (let i = 0; i <= 6; i++) {
+      const t = i / 6;
+      const px = -shoulder * 0.9 + shoulder * 1.8 * t;
+      ctx.quadraticCurveTo(px + 2, hipY - 52, px + 5, hipY - 47);
+    }
+    ctx.lineTo(shoulder * 0.9, hipY - 42);
+    ctx.lineTo(-shoulder * 0.9, hipY - 42);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Пояс с подвесками
+    ctx.fillStyle = '#3a2418';
+    ctx.strokeStyle = pal.deep;
+    ctx.lineWidth = 1.6;
+    roundRect(ctx, -waist, hipY - 12, waist * 2, 6, 2);
+    ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = pal.trim;
+    ctx.lineWidth = 1.6;
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.moveTo(sd * 8, hipY - 7);
+      ctx.lineTo(sd * 9, hipY + 1);
+      ctx.stroke();
+    });
+    sheen(-11, hipY - 36, 6, 8, -0.4);
   } else if (vis === 'leather' || vis === 'brigandine' || vis === 'hide') {
     // Кожа: ремни, шнуровка и прошивка по краю
     ctx.strokeStyle = dark;
@@ -3894,7 +4332,8 @@ function drawBattleDog(ctx, dog, x, y, scale = 1, facing = 1, a = {}) {
   ctx.quadraticCurveTo(-bodyLen * 0.72, bodyY - 6 + wag * 0.4, -bodyLen * 0.66, bodyY - 20 + wag);
   ctx.stroke();
 
-  // ---------- Корпус ----------
+
+// ---------- Корпус ----------
   ctx.beginPath();
   ctx.ellipse(-bodyLen * 0.04, bodyY, bodyLen * 0.46, bodyH * 0.62, -0.04, 0, Math.PI * 2);
   ctx.fillStyle = colors.body;
@@ -4177,6 +4616,10 @@ function drawItemIcon(ctx, item, x, y, size) {
     ctx.lineWidth = 3;
     roundRect(ctx, -8, -16, 26, 12, 4);
     ctx.fill(); ctx.stroke();
+    // Новые школы: показываем фактуру наручей на иконке
+    if (['medieval', 'china', 'rus', 'mongol'].includes(item.vis)) {
+      drawArmSchoolDetail(ctx, item, 6, -4);
+    }
   } else if (item.slot === 'legs') {
     const sc = size / 100;
     ctx.scale(sc, sc);
@@ -4188,6 +4631,34 @@ function drawItemIcon(ctx, item, x, y, size) {
       ctx.lineWidth = 3;
       roundRect(ctx, sd * 16 - 12, -22, 24, 34, 5);
       ctx.fill(); ctx.stroke();
+      // Новые школы: полосы отделки по поножу
+      if (item.vis === 'medieval') {
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        roundRect(ctx, sd * 16 - 9, -18, 6, 24, 3);
+        ctx.fill();
+        ctx.fillStyle = item.trim || '#c0392b';
+        roundRect(ctx, sd * 16 - 12, -4, 24, 4, 2);
+        ctx.fill();
+      } else if (item.vis === 'china') {
+        ctx.fillStyle = item.trim || '#e2b65a';
+        for (let i = 0; i < 3; i++) {
+          roundRect(ctx, sd * 16 - 10, -18 + i * 9, 20, 3.4, 1.4);
+          ctx.fill();
+        }
+      } else if (item.vis === 'rus') {
+        ctx.strokeStyle = shade(item.color, -0.3);
+        ctx.lineWidth = 1.4;
+        for (let i = 0; i < 4; i++) {
+          ctx.beginPath();
+          ctx.moveTo(sd * 16 - 11, -18 + i * 8);
+          ctx.lineTo(sd * 16 + 11, -17 + i * 8);
+          ctx.stroke();
+        }
+      } else if (item.vis === 'mongol') {
+        ctx.fillStyle = '#b8a888';
+        roundRect(ctx, sd * 16 - 12, -6, 24, 6, 3);
+        ctx.fill();
+      }
     });
   }
 
@@ -4197,4 +4668,89 @@ function drawItemIcon(ctx, item, x, y, size) {
 function itemTierBadge(item) {
   const t = TIER_INFO[item.tier] || TIER_INFO[1];
   return `<span class="tier-badge" style="color:${t.color};border-color:${t.color}">${t.stars} ${t.name}</span>`;
+}
+
+// ---------- Body cosmetics: tattoos and war paint ----------
+function drawBodyCosmetics(ctx, glad, shoulder, waist, hipY) {
+  const tattoo = glad.tattoo || (glad.cosmetic && glad.cosmetic.tattoo) || 'none';
+  const paint = glad.paint || (glad.cosmetic && glad.cosmetic.paint) || 'none';
+  if (tattoo === 'none' && paint === 'none') return;
+
+  ctx.save();
+  ctx.lineCap = 'round';
+
+  if (tattoo === 'bands') {
+    ctx.strokeStyle = 'rgba(38,28,26,0.75)';
+    ctx.lineWidth = 2.6;
+    for (let i = 0; i < 3; i++) {
+      const yy = hipY - 40 + i * 5;
+      ctx.beginPath();
+      ctx.moveTo(-shoulder * 0.62, yy);
+      ctx.quadraticCurveTo(-shoulder * 0.35, yy + 2, -shoulder * 0.12, yy);
+      ctx.moveTo(shoulder * 0.62, yy);
+      ctx.quadraticCurveTo(shoulder * 0.35, yy + 2, shoulder * 0.12, yy);
+      ctx.stroke();
+    }
+  } else if (tattoo === 'snake') {
+    ctx.strokeStyle = 'rgba(30,60,44,0.85)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(shoulder * 0.68, hipY - 46);
+    ctx.bezierCurveTo(shoulder * 0.4, hipY - 34, shoulder * 0.72, hipY - 22, shoulder * 0.34, hipY - 14);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(30,60,44,0.85)';
+    ctx.beginPath();
+    ctx.arc(shoulder * 0.34, hipY - 14, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (tattoo === 'wings') {
+    ctx.strokeStyle = 'rgba(40,32,30,0.7)';
+    ctx.lineWidth = 2.2;
+    [-1, 1].forEach(s => {
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(s * shoulder * 0.1, hipY - 44 + i * 4);
+        ctx.quadraticCurveTo(s * shoulder * 0.5, hipY - 46 + i * 8, s * shoulder * 0.85, hipY - 30 + i * 9);
+        ctx.stroke();
+      }
+    });
+  } else if (tattoo === 'runes') {
+    ctx.strokeStyle = 'rgba(52,34,60,0.8)';
+    ctx.lineWidth = 2.2;
+    const rx = [-shoulder * 0.34, 0, shoulder * 0.34];
+    rx.forEach((x, i) => {
+      const yy = hipY - 38 + (i % 2) * 8;
+      ctx.beginPath();
+      ctx.moveTo(x - 4, yy); ctx.lineTo(x + 4, yy);
+      ctx.moveTo(x, yy - 6); ctx.lineTo(x, yy + 6);
+      ctx.moveTo(x - 3, yy + 3); ctx.lineTo(x + 3, yy - 3);
+      ctx.stroke();
+    });
+  }
+
+  if (paint === 'war') {
+    ctx.strokeStyle = 'rgba(150,40,32,0.6)';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(-shoulder * 0.5, hipY - 44); ctx.lineTo(-shoulder * 0.2, hipY - 16);
+    ctx.moveTo(shoulder * 0.5, hipY - 44); ctx.lineTo(shoulder * 0.2, hipY - 16);
+    ctx.stroke();
+  } else if (paint === 'ash') {
+    ctx.fillStyle = 'rgba(70,66,62,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(-shoulder * 0.3, hipY - 30, shoulder * 0.4, 16, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (paint === 'gold') {
+    ctx.strokeStyle = 'rgba(226,182,90,0.8)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-shoulder * 0.55, hipY - 42);
+    ctx.quadraticCurveTo(0, hipY - 26, shoulder * 0.55, hipY - 42);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-shoulder * 0.4, hipY - 20);
+    ctx.quadraticCurveTo(0, hipY - 8, shoulder * 0.4, hipY - 20);
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }

@@ -66,6 +66,7 @@ const Save = (() => {
       armorCat: S.armorCat || 'offhand',
       gearFilter: S.gearFilter || 'all',
       payWith: S.payWith || 'gold',
+      training: S.training || {},
       story: S.story || { step: 0, motherHealed: false, seen: [] },
       bossesBeaten: S.bossesBeaten || [],
       lastArenaId: S.lastArenaId || null,
@@ -100,6 +101,8 @@ const Save = (() => {
     S.armorCat = data.armorCat || 'offhand';
     S.gearFilter = data.gearFilter || 'all';
     S.payWith = data.payWith === 'fame' ? 'fame' : 'gold';
+    // Тренировка хранится как {id: {prog, need}} — прогресс ритма в миллисекундах
+    S.training = (data.training && typeof data.training === 'object') ? data.training : {};
     S.story = data.story || { step: 0, motherHealed: false, seen: [] };
     S.bossesBeaten = Array.isArray(data.bossesBeaten) ? data.bossesBeaten : [];
     S.lastArenaId = data.lastArenaId || null;

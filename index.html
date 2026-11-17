@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Братья Арены — Симулятор Гладиаторов</title>
-  <link rel="stylesheet" href="style.css?v=35">
-  <link rel="stylesheet" href="barracks.css?v=35">
+  <link rel="stylesheet" href="style.css?v=42">
+  <link rel="stylesheet" href="barracks.css?v=42">
 </head>
 <body>
 
@@ -184,12 +184,8 @@
         <div class="head-actions">
           <span class="panel-gold fame">🏆 <b id="market-fame">0</b></span>
           <button class="mini-btn" onclick="goTo('chests')">📦 сундуки</button>
+          <button class="mini-btn" onclick="goTo('cosmetics')">🎨 внешность за славу</button>
         </div>
-      </div>
-      <div class="market-pay">
-        <span>Оплата:</span>
-        <button class="chip on" id="pay-gold" onclick="setPayWith('gold')">💰 золото</button>
-        <button class="chip" id="pay-fame" onclick="setPayWith('fame')">🏆 слава</button>
       </div>
       <div id="market-cats"></div>
       <div id="market-grid" class="item-grid"></div>
@@ -230,11 +226,48 @@
         <h2>🎯 Двор тренировок</h2>
         <span class="panel-gold">💰 <b id="training-gold">0</b></span>
       </div>
-      <p class="panel-note">Стрельба по мишеням и удары по пугалам дают опыт без риска. Цена: <b>55з</b>.</p>
+      <p class="panel-note">Тренировка — это ритм. Боец бьёт по щиту в такт музыке: нажимайте <b>A S D F</b>, когда метка входит в зону удара. Первый уровень — <b>30 секунд</b> чистого ритма, каждый следующий — на 5 секунд дольше. Промах сбивает серию. Цена: <b>55з</b>.</p>
       <div class="training-stage">
         <canvas id="trainingCanvas" width="900" height="300"></canvas>
       </div>
+      <div id="train-game" class="train-game" style="display:none"></div>
       <div id="training-list" class="temple-list"></div>
+    </div>
+  </section>
+
+  <!-- ================= КОСМЕТИКА ЗА СЛАВУ ================= -->
+  <section id="screen-cosmetics" class="screen">
+    <div class="panel wide-panel">
+      <div class="panel-head">
+        <h2>🎨 Внешность за славу</h2>
+        <div class="head-actions">
+          <span class="panel-gold fame">🏆 <b id="cosmetics-fame">0</b></span>
+          <button class="mini-btn" onclick="goTo('market')">в кузницу</button>
+        </div>
+      </div>
+      <p class="panel-note">Слава — не деньги: снаряжение на неё больше не купить. Зато толпа запоминает лица. Меняйте облик бойца: рост, телосложение, татуировки, шрамы и боевую раскраску.</p>
+      <div id="cosmetics-list" class="cosmetics-list"></div>
+    </div>
+  </section>
+
+  <!-- ================= ПРОМЫСЕЛ: РЫБАЛКА И ОХОТА ================= -->
+  <section id="screen-fishing" class="screen">
+    <div class="panel wide-panel">
+      <div class="panel-head">
+        <h2>🎣 Промысел</h2>
+        <div class="head-actions">
+          <span class="panel-gold">💰 <b id="fishing-gold">0</b></span>
+          <button class="mini-btn" onclick="goTo('city')">в город</button>
+        </div>
+      </div>
+      <p class="panel-note">Честный, но скудный хлеб. Удачный промысел даёт примерно половину золота среднего боя — на арене платят больше.</p>
+      <div class="work-tabs" id="work-tabs"></div>
+      <div class="work-stage">
+        <canvas id="workCanvas" width="900" height="280"></canvas>
+      </div>
+      <div id="work-status" class="work-status"></div>
+      <button class="wide-btn primary" id="work-btn" onclick="workAction()">Начать</button>
+      <div class="work-hint" id="work-hint"></div>
     </div>
   </section>
 
@@ -533,13 +566,13 @@
   };
 </script>
 
-<script src="audio.js?v=35"></script>
-<script src="data.js?v=35"></script>
-<script src="save.js?v=35"></script>
-<script src="renderer.js?v=35"></script>
-<script src="events.js?v=35"></script>
-<script src="combat.js?v=35"></script>
-<script src="game.js?v=35"></script>
+<script src="audio.js?v=42"></script>
+<script src="data.js?v=42"></script>
+<script src="save.js?v=42"></script>
+<script src="renderer.js?v=42"></script>
+<script src="events.js?v=42"></script>
+<script src="combat.js?v=42"></script>
+<script src="game.js?v=42"></script>
 <script>initGame();</script>
 </body>
 </html>

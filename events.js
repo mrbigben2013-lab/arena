@@ -152,17 +152,16 @@ function applyEventEffects(effects, ctx) {
     }
 
     // --- Потеря бойца ---
-    if (fx.loseWeakest && roster.length > 1) {
+    // Гладиаторы больше не уходят из отряда по событиям: отряд — это
+    // собственность игрока, распоряжаться ей может только он сам.
+    // Событие, которое раньше забирало бойца, теперь просто пугает:
+    // боец получает травму, но остаётся в лудусе.
+    if (fx.loseWeakest && roster.length) {
       const weakest = roster.slice().sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0];
-      const i = STATE.roster.indexOf(weakest);
-      if (i >= 0) {
-        STATE.roster.splice(i, 1);
-        const si = STATE.squad.indexOf(weakest.id);
-        if (si >= 0) STATE.squad.splice(si, 1);
-        if (STATE.selectedGladId === weakest.id) {
-          STATE.selectedGladId = STATE.roster[0] ? STATE.roster[0].id : null;
-        }
-        log.push(`${weakest.name} покидает отряд`);
+      if (weakest) {
+        const dmg = Math.max(1, Math.round(weakest.maxHp * 0.35));
+        weakest.hp = Math.max(1, weakest.hp - dmg);
+        log.push(`${weakest.name} сильно пострадал, но остался в отряде`);
       }
     }
 
