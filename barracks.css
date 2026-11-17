@@ -1,0 +1,223 @@
+/* ================= КАЗАРМА — стиль Rogue Trader ================= */
+#screen-barracks.active {
+  display: block;
+  padding: 0;
+  overflow: hidden;
+}
+
+.barracks-wrap {
+  display: grid;
+  grid-template-columns: minmax(230px, 300px) minmax(230px, 1fr) minmax(240px, 340px);
+  gap: 8px;
+  padding: 8px;
+  height: calc(100vh - 62px);
+  overflow: hidden;
+}
+
+/* ---------- общие панели ---------- */
+.br-left, .br-center, .br-right {
+  min-height: 0;
+  background:
+    linear-gradient(180deg, rgba(52,42,32,.55), rgba(18,15,12,.96)),
+    radial-gradient(ellipse at 50% 0%, #2a211a 0%, #12100c 70%);
+  border: 1.5px solid #4a3b2a;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(229,181,79,.12), 0 6px 20px rgba(0,0,0,.5);
+  padding: 9px;
+}
+.br-left { display: flex; flex-direction: column; gap: 7px; overflow-y: auto; }
+.br-center { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 6px; overflow: hidden; position: relative; }
+.br-right { display: flex; flex-direction: column; gap: 7px; }
+
+/* ---------- переключатель бойцов ---------- */
+.br-switch {
+  display: flex; align-items: center; gap: 7px; flex-shrink: 0;
+  background: linear-gradient(180deg, #2a2119, #16120e);
+  border: 1px solid #4a3b2a;
+  border-radius: 3px;
+  padding: 3px 5px;
+}
+.br-arrow {
+  width: 26px; height: 26px; flex-shrink: 0;
+  background: linear-gradient(180deg, #3a2e22, #221a14);
+  border: 1px solid #6b5433; border-radius: 3px;
+  color: var(--gold); font-size: 16px; font-weight: 800; line-height: 1;
+  cursor: pointer; transition: .13s;
+}
+.br-arrow:hover { background: linear-gradient(180deg, #52402c, #2e2419); border-color: var(--gold); box-shadow: 0 0 8px rgba(229,181,79,.35); }
+.br-arrow:active { transform: scale(.93); }
+
+.br-who { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; }
+.bw-name {
+  font-size: 12px; font-weight: 800; color: var(--gold); letter-spacing: .4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  text-transform: uppercase;
+}
+.bw-sub { font-size: 9px; color: var(--muted); letter-spacing: .5px; }
+
+/* ---------- левая колонка: характеристики ---------- */
+.br-card { display: flex; flex-direction: column; gap: 6px; }
+.br-name-row { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+.br-name { font-size: 13px; font-weight: 800; color: var(--text); }
+.br-role { font-size: 11px; }
+.br-sub { font-size: 10px; color: var(--muted); margin-top: -3px; }
+
+.br-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
+.br-stats .stat {
+  background: rgba(12,10,8,.7); border: 1px solid #33291f; border-radius: 3px;
+  padding: 3px 6px; display: flex; justify-content: space-between; gap: 3px;
+  font-size: 9.5px; color: var(--muted);
+}
+.br-stats .stat b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* ---------- манекен ---------- */
+.doll {
+  position: relative;
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr minmax(150px, 210px) 1fr;
+  grid-template-rows: auto auto 1fr auto auto;
+  grid-template-areas:
+    ".       head    ."
+    "weapon  canvas  offhand"
+    "arms    canvas  body"
+    "legs    canvas  ."
+    ".       .       .";
+  gap: 6px;
+  align-items: center;
+  justify-items: stretch;
+}
+.slot-head    { grid-area: head; }
+.slot-weapon  { grid-area: weapon; }
+.slot-offhand { grid-area: offhand; }
+.slot-body    { grid-area: body; }
+.slot-arms    { grid-area: arms; }
+.slot-legs    { grid-area: legs; }
+.doll-canvas  { grid-area: canvas; display: flex; align-items: center; justify-content: center; height: 100%; }
+
+.doll-slot {
+  position: relative;
+  min-height: 46px;
+  background:
+    linear-gradient(135deg, rgba(60,48,34,.5), rgba(16,13,10,.92));
+  border: 1.5px solid #4a3b2a;
+  border-radius: 3px;
+  padding: 4px 6px;
+  cursor: pointer;
+  transition: .14s;
+  display: flex; flex-direction: column; justify-content: center; gap: 1px;
+  overflow: hidden;
+}
+.doll-slot::before {
+  content: ''; position: absolute; inset: 0;
+  background: repeating-linear-gradient(45deg, rgba(229,181,79,.03) 0 6px, transparent 6px 12px);
+  pointer-events: none;
+}
+.ds-label {
+  font-size: 8px; text-transform: uppercase; letter-spacing: 1px;
+  color: var(--gold-dim); font-weight: 700;
+}
+.ds-item { font-size: 10px; font-weight: 700; color: var(--text); line-height: 1.2; }
+.ds-item .ds-name { display: block; overflow: hidden; text-overflow: ellipsis; }
+.doll-slot.empty .ds-item { color: #6b5b48; font-style: italic; font-weight: 500; }
+.doll-slot.filled { border-color: #8a6d3f; box-shadow: inset 0 0 12px rgba(229,181,79,.12); }
+.doll-slot:hover { border-color: var(--gold); box-shadow: 0 0 10px rgba(229,181,79,.25); }
+.doll-slot.drop-hover {
+  border-color: #7fd18f;
+  box-shadow: 0 0 14px rgba(127,209,143,.45), inset 0 0 14px rgba(127,209,143,.15);
+}
+.doll-hint {
+  font-size: 9px; color: #7a6a55; text-align: center; letter-spacing: .3px;
+  flex-shrink: 0; font-style: italic;
+}
+.doll-canvas canvas {
+  display: block; max-width: 100%; max-height: 100%;
+  filter: drop-shadow(0 6px 16px rgba(0,0,0,.6));
+}
+
+/* ---------- правая колонка: склад ---------- */
+.br-filters { display: flex; flex-direction: column; gap: 5px; flex-shrink: 0; }
+.br-filter-row { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.br-filter-row .chip {
+  padding: 3px 8px; font-size: 9.5px; border-radius: 3px;
+  background: linear-gradient(180deg, #2a2119, #171310);
+  border: 1px solid #4a3b2a; color: var(--muted);
+  cursor: pointer; transition: .13s; font-weight: 700;
+}
+.br-filter-row .chip:hover { border-color: #8a6d3f; color: var(--text); }
+.br-filter-row .chip.on {
+  background: linear-gradient(180deg, #4a3826, #2a2118);
+  border-color: var(--gold); color: var(--gold);
+  box-shadow: 0 0 8px rgba(229,181,79,.28);
+}
+.br-count { font-size: 9.5px; color: var(--muted); margin-left: auto; letter-spacing: .3px; }
+
+.br-grid {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 3px;
+  padding-right: 3px;
+}
+
+.br-item {
+  display: grid;
+  grid-template-columns: 42px 1fr auto;
+  align-items: center;
+  gap: 7px;
+  background: linear-gradient(90deg, rgba(40,32,24,.85), rgba(18,15,12,.85));
+  border: 1px solid #3a2f23;
+  border-radius: 3px;
+  padding: 4px 7px;
+  cursor: grab;
+  transition: .13s;
+}
+.br-item:hover {
+  border-color: #8a6d3f;
+  background: linear-gradient(90deg, rgba(60,48,34,.9), rgba(24,20,15,.9));
+}
+.br-item.dragging { opacity: .4; cursor: grabbing; }
+.br-item.locked { opacity: .55; }
+.br-item.locked:hover { border-color: #7a3a2a; }
+.bi-icon {
+  width: 40px; height: 40px; flex-shrink: 0;
+  background: radial-gradient(circle at 50% 40%, #2c241b, #12100c);
+  border: 1px solid #3a2f23; border-radius: 3px;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.bi-body { min-width: 0; }
+.bi-top { display: flex; align-items: center; gap: 5px; }
+.bi-name {
+  font-size: 10.5px; font-weight: 700; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bi-stat {
+  font-size: 9px; color: var(--muted); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.bi-req { font-size: 8.5px; margin-top: 2px; display: flex; gap: 4px; align-items: center; }
+.bi-req span { font-weight: 700; }
+.req-ok { color: #7fb08a; }
+.req-bad { color: #d9705f; }
+.bi-actions { display: flex; gap: 3px; flex-shrink: 0; }
+.bi-btn {
+  background: linear-gradient(180deg, #3a2e22, #221a14);
+  border: 1px solid #5a4630; border-radius: 3px;
+  color: var(--text); font-size: 9px; font-weight: 700;
+  padding: 3px 6px; cursor: pointer; transition: .13s;
+}
+.bi-btn:hover { border-color: var(--gold); color: var(--gold); }
+.bi-btn.sell { color: #b9a488; }
+.bi-btn.sell:hover { border-color: #c9a45c; color: #ffd166; }
+.bi-btn:disabled { opacity: .35; cursor: default; }
+.bi-btn:disabled:hover { border-color: #5a4630; color: var(--text); }
+
+@media (max-width: 820px) {
+  .barracks-wrap {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+  .br-grid { max-height: 42vh; }
+  .doll { min-height: 380px; }
+}
