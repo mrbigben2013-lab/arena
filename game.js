@@ -92,8 +92,7 @@ function colorOf(list, id, fallback) {
 function createGladiator(customBg = null, forcedRole = null, gender = null) {
   const bg = customBg || pick(BACKGROUNDS);
   const g = gender || (Math.random() < 0.5 ? 'male' : 'female');
-  const pool = g === 'female' ? NAMES_F : NAMES_M;
-  const name = pick(pool) + ' ' + pick(NICKNAMES);
+  const name = randomName(g);
   // Класс арены: своя школа, свой перк, своё снаряжение
   const cls = forcedRole
     ? pickClassForRole(forcedRole)
@@ -205,7 +204,7 @@ function updateCreatorPreview() {
 
 function randomizeCreator() {
   const gender = Math.random() < 0.5 ? 'male' : 'female';
-  document.getElementById('cr-name').value = pick(gender === 'female' ? NAMES_F : NAMES_M) + ' ' + pick(NICKNAMES);
+  document.getElementById('cr-name').value = randomName(gender);
   document.getElementById('cr-gender').value = gender;
   document.getElementById('cr-build').value = pick(['slim', 'normal', 'muscular', 'heavy']);
   document.getElementById('cr-skin').value = pick(SKIN_TONES).color;
@@ -1725,6 +1724,51 @@ function renderRoster() {
     ? `<span class="bw-name">${g.name}</span>
        <span class="bw-sub">${idx + 1} / ${STATE.roster.length} • ур. ${g.level}${lost ? ` • ✕${lost}` : ''}${STATE.squad.includes(g.id) ? ' • в отряде' : ''}</span>`
     : `<span class="bw-name">Казарма пуста</span>`;
+  renderAvatarStrip();
+}
+
+// Полоса аватарок компаньонов в казарме.
+// Каждая карточка — мини-портрет бойца, его имя, уровень и отметка отряда.
+// Клик по карточке выбирает бойца; количество бойцов подписано в заголовке.
+function renderAvatarStrip() {
+  const box = document.getElementById('br-avatars');
+  if (!box) return;
+  if (!STATE.roster.length) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = 'flex';
+  const selId = (getSelectedGlad() || {}).id;
+  box.innerHTML = `
+    <div class="br-avatars-head">Товарищи <b>${STATE.roster.length}</b></div>
+    ${STATE.roster.map(g => {
+      const inSquad = STATE.squad.includes(g.id);
+      const lost = lostLimbs(g).length;
+      const hurt = g.hp <= 0;
+      return `<div class="br-avatar-card ${g.id === selId ? 'selected' : ''} ${hurt ? 'hurt' : ''}"
+        onclick="selectGlad('${g.id}')"
+        title="${g.name} • ур. ${g.level}${inSquad ? ' • в отряде' : ''}${lost ? ` • ✕${lost}` : ''}">
+        <canvas class="br-avatar-portrait" width="28" height="34" data-av-id="${g.id}"></canvas>
+        <div class="br-avatar-info">
+          <span class="br-avatar-name">${g.name}</span>
+          <span class="br-avatar-meta">
+            <span class="br-avatar-level">ур.${g.level}</span>
+            ${inSquad ? '<span class="br-avatar-squad">✓</span>' : ''}
+            ${lost ? `<span class="br-avatar-count">✕${lost}</span>` : ''}
+          </span>
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+  // Рисуем мини-портреты
+  box.querySelectorAll('canvas.br-avatar-portrait').forEach(cv => {
+    const g = STATE.roster.find(x => x.id === cv.dataset.avId);
+    if (!g) return;
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    drawGladCentered(ctx, g, cv.width, cv.height, 10);
+  });
 }
 
 // Листание бойцов стрелками над портретом
@@ -1860,12 +1904,90 @@ function renderDoll(g) {
       el.innerHTML = `<span class="ds-name">${it.name}</span>`;
       el.classList.add('filled');
       el.classList.remove('empty');
+      // Добавляем data-uid для тултипов
+      el.dataset.uid = it.uid;
+      el.dataset.slot = slot;
     } else {
       el.innerHTML = `<span class="ds-name">—</span>`;
       el.classList.remove('filled');
       el.classList.add('empty');
+      delete el.dataset.uid;
+      el.dataset.slot = slot;
     }
   });
+  // Привязываем подсказки к манекену
+  bindSlotTips(g);
+}
+
+// ---------- Тултипы для экипированного снаряжения ----------
+let _slotTipsRoot = null;
+
+function bindSlotTips(g) {
+  // Ищем манекен (контейнер .doll)
+  const doll = document.querySelector('.doll');
+  if (!doll) return;
+  if (_slotTipsRoot === doll) return; // уже привязаны
+  _slotTipsRoot = doll;
+
+  doll.querySelectorAll('.doll-slot').forEach(slotEl => {
+    slotEl.addEventListener('mouseenter', ev => {
+      const uid = slotEl.dataset.uid;
+      if (!uid) return;
+      const item = (g && g.equip) ? g.equip[slotEl.dataset.slot] : null;
+      if (!item) return;
+      showSlotTip(ev, item);
+    });
+    slotEl.addEventListener('mousemove', ev => {
+      const uid = slotEl.dataset.uid;
+      if (!uid) return;
+      placeSlotTip(ev);
+    });
+    slotEl.addEventListener('mouseleave', () => {
+      hideSlotTip();
+    });
+  });
+}
+
+function showSlotTip(ev, item) {
+  const el = ensureSlotTip();
+  el.innerHTML = itemTooltipHTML(item, getSelectedGlad());
+  el.classList.add('show');
+  placeSlotTip(ev);
+}
+
+function placeSlotTip(ev) {
+  const el = document.getElementById('slot-tip');
+  if (!el) return;
+  const pad = 14;
+  const w = el.offsetWidth || 260;
+  const h = el.offsetHeight || 180;
+  let x = ev.clientX + pad;
+  let y = ev.clientY + pad;
+  if (x + w > window.innerWidth - 8) x = ev.clientX - w - pad;
+  if (y + h > window.innerHeight - 8) y = Math.max(8, ev.clientY - h - pad);
+  el.style.left = Math.max(8, x) + 'px';
+  el.style.top = Math.max(8, y) + 'px';
+}
+
+function hideSlotTip() {
+  const el = document.getElementById('slot-tip');
+  if (el) el.classList.remove('show');
+}
+
+function ensureSlotTip() {
+  let el = document.getElementById('slot-tip');
+  if (el && document.body.contains(el)) return el;
+  if (el && !document.body.contains(el)) {
+    el.id = 'slot-tip';
+    el.className = 'slot-tip';
+    document.body.appendChild(el);
+    return el;
+  }
+  el = document.createElement('div');
+  el.id = 'slot-tip';
+  el.className = 'slot-tip';
+  document.body.appendChild(el);
+  return el;
 }
 
 // Drag & drop
@@ -3478,33 +3600,45 @@ function trainBeatStep(now) {
 }
 
 // Нажатие: клавиша или кнопка. Возвращает true при точном ударе.
+// Только настоящее попадание: нота уже «приехала» на дорожку.
+// Раньше игрок мог нажать кнопку заранее — до того как нота появится —
+// и это засчитывалось как точный удар. Теперь проверка строгая:
+// нажатие работает только в окне [nextBeatAt - WINDOW, nextBeatAt + WINDOW].
 function trainHitLane(lane) {
   const g = TRAIN_GAME;
   if (!g.running || !g.id) return false;
   const t = trainState(g.id);
   if (!t) return false;
   const now = performance.now();
-  const until = Math.abs(g.nextBeatAt - now);
-  const good = lane === g.lane && until <= TRAIN_WINDOW_MS;
+  const until = now - g.nextBeatAt;
+  const good = lane === g.lane && Math.abs(until) <= TRAIN_WINDOW_MS;
   if (!g.beatResolved) {
     t.beats = (t.beats || 0) + 1;
-    if (good) t.hits = (t.hits || 0) + 1;
+    if (good) {
+      t.hits = (t.hits || 0) + 1;
+      g.combo++;
+      g.best = Math.max(g.best, g.combo);
+      g.flash = 1;
+      g.laneFlash[lane] = 1;
+      sfx('rhythmHit');
+      trainPadFlash(lane, 'hit');
+      // Такт закрыт — сразу выдаём следующий, чтобы не было двойных попаданий
+      trainBeatStep(now);
+    } else {
+      // Не та дорожка или не вовремя:
+      //   • если нота уже «приехала» (until >= -WINDOW) — это промах
+      //   • если нота ещё не приехала — просто игнор, без штрафа
+      if (until >= -TRAIN_WINDOW_MS) {
+        g.misses++;
+        g.combo = 0;
+        sfx('rhythmMiss');
+        trainPadFlash(lane, 'miss');
+      }
+    }
     g.beatResolved = true;
-  }
-  if (good) {
-    g.combo++;
-    g.best = Math.max(g.best, g.combo);
-    g.flash = 1;
-    g.laneFlash[lane] = 1;
-    sfx('rhythmHit');
-    trainPadFlash(lane, 'hit');
-    // Такт закрыт — сразу выдаём следующий, чтобы не было двойных попаданий
-    trainBeatStep(now);
   } else {
-    g.misses++;
-    g.combo = 0;
-    sfx('rhythmMiss');
-    trainPadFlash(lane, 'miss');
+    // Такт уже решён, повторное нажатие игнорируем
+    return false;
   }
   updateTrainStats();
   return good;

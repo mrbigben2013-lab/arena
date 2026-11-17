@@ -55,6 +55,82 @@
 }
 .bw-sub { font-size: 9px; color: var(--muted); letter-spacing: .5px; }
 
+/* ---------- полоса аватарок компаньонов ---------- */
+.br-avatars {
+  display: flex; gap: 5px; flex-wrap: wrap; align-items: center; flex-shrink: 0;
+  padding: 5px 2px 3px;
+  background: linear-gradient(180deg, #2a2119, #16120e);
+  border: 1px solid #4a3b2a;
+  border-radius: 3px;
+}
+.br-avatars-head {
+  width: 100%;
+  font-size: 9px; font-weight: 800; color: var(--muted);
+  letter-spacing: .6px; text-transform: uppercase;
+  padding: 0 2px 2px;
+  border-bottom: 1px dashed rgba(229,181,79,.2);
+  margin-bottom: 2px;
+}
+.br-avatars-head b { color: var(--gold); font-variant-numeric: tabular-nums; }
+.br-avatar-card {
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(12,10,8,.6);
+  border: 1.5px solid #3a2e22;
+  border-radius: 4px;
+  padding: 3px 5px;
+  cursor: pointer;
+  transition: border-color .12s, box-shadow .12s;
+  user-select: none;
+  position: relative;
+}
+.br-avatar-card:hover {
+  border-color: #6b5433;
+  box-shadow: 0 0 6px rgba(229,181,79,.2);
+}
+.br-avatar-card.selected {
+  border-color: var(--gold);
+  box-shadow: 0 0 8px rgba(229,181,79,.35);
+}
+/* Раненый (hp <= 0) — приглушённый, красная рамка */
+.br-avatar-card.hurt {
+  border-color: #6b2a24;
+  opacity: .6;
+  filter: saturate(.45);
+}
+.br-avatar-card.hurt:hover { opacity: .8; }
+.br-avatar-portrait {
+  width: 28px; height: 34px;
+  border-radius: 2px;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
+  image-rendering: auto;
+}
+.br-avatar-info {
+  display: flex; flex-direction: column; gap: 0;
+  min-width: 0;
+}
+.br-avatar-name {
+  font-size: 9px; font-weight: 700; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 80px;
+}
+.br-avatar-meta {
+  font-size: 8px; color: var(--muted); display: flex; gap: 3px; align-items: center;
+}
+.br-avatar-level {
+  color: var(--gold);
+  font-weight: 700;
+}
+.br-avatar-squad {
+  font-size: 8px;
+  color: #8fd6a3;
+}
+.br-avatar-count {
+  font-size: 7px; color: var(--muted); background: rgba(0,0,0,.4);
+  border-radius: 2px; padding: 0 3px;
+}
+
 /* ---------- левая колонка: характеристики ---------- */
 .br-card { display: flex; flex-direction: column; gap: 6px; }
 .br-name-row { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
@@ -213,7 +289,7 @@
 .bi-btn:disabled:hover { border-color: #5a4630; color: var(--text); }
 
 /* ================= ТУЛТИП ПРЕДМЕТА ================= */
-.item-tip {
+.item-tip, .slot-tip {
   position: fixed;
   z-index: 9999;
   width: 268px;
@@ -230,6 +306,14 @@
   line-height: 1.45;
   color: var(--text);
 }
+.slot-tip.show { opacity: 1; transform: translateY(0); }
+.slot-tip .it-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 6px; margin-bottom: 1px;
+}
+.slot-tip .it-name { font-size: 12px; font-weight: 800; color: #ffe0a8; line-height: 1.2; }
+.slot-tip .tier-badge { font-size: 8px; padding: 1px 4px; flex-shrink: 0; }
+.slot-tip .it-slot {
 .item-tip.show { opacity: 1; transform: translateY(0); }
 .item-tip .it-head {
   display: flex; align-items: flex-start; justify-content: space-between;
