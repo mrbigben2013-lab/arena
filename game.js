@@ -1471,18 +1471,20 @@ const CITY_ZONES = {
 // Маршруты — ломаные в долях от размера холста, чтобы бойцы
 // не заходили на крыши и стены домов.
 const CITY_PATHS = {
-  // Мостовая: чистая полоса между рынком и стеной арены (без телег и навесов)
+  // Мостовая: широкая полоса от рынка до арены, три боковые дорожки
   street: [
-    [0.455, 0.985], [0.470, 0.905], [0.495, 0.830],
-    [0.520, 0.760], [0.545, 0.700], [0.560, 0.655]
+    [0.250, 0.985], [0.290, 0.920], [0.330, 0.855],
+    [0.380, 0.790], [0.430, 0.730], [0.470, 0.670]
   ],
-  // Ступени храма: только по самой лестнице, не заходя на площадку с колоннами
+  // Ступени храма: от площадки до верха лестницы
   stairs: [
-    [0.310, 0.560], [0.290, 0.520], [0.270, 0.480], [0.256, 0.448]
+    [0.180, 0.590], [0.200, 0.560], [0.230, 0.530],
+    [0.260, 0.500], [0.285, 0.470], [0.310, 0.448]
   ],
-  // Тренировочная площадка у мишеней — внутри песчаного двора
+  // Тренировочная площадка — широкая зона у мишеней
   yard: [
-    [0.700, 0.930], [0.760, 0.905], [0.820, 0.888], [0.870, 0.878]
+    [0.580, 0.950], [0.640, 0.920], [0.710, 0.898],
+    [0.780, 0.882], [0.840, 0.872], [0.890, 0.868]
   ]
 };
 
@@ -1533,13 +1535,16 @@ function initCityActors(W, H) {
     const startT = 0.15 + (i * 0.27) % 0.7;
     const pt = cityPathPoint(path, startT);
     const yard = routeName === 'yard';
+    // Боковое смещение: каждый боец идёт по своей «полосе»,
+    // чтобы не наслаивались друг на друга. Смещение по X в долях экрана.
+    const laneOffset = (i % 3 - 1) * 0.045;
     return {
       glad: g,
       route: routeName,
       path,
       pathT: startT,
       dir: i % 2 ? -1 : 1,
-      x: W * pt.x,
+      x: W * pt.x + laneOffset * W,
       y: H * pt.y,
       scale: H * cityScaleAt(pt.y) / 148,
       speed: yard ? 0.035 : 0.055,
@@ -1551,7 +1556,8 @@ function initCityActors(W, H) {
       victory: 0,
       swingPhase: Math.random() * 6,
       dustT: 0,
-      depth: 0
+      depth: 0,
+      laneOffset
     };
   });
 }
@@ -1600,7 +1606,9 @@ function updateCityActors(dt, W, H) {
       if (a.pathT <= 0) { a.pathT = 0; a.dir = 1; }
 
       const pt = cityPathPoint(a.path, a.pathT);
-      const nx = W * pt.x, ny = H * pt.y;
+      // Применяем боковое смещение: каждый боец идёт по своей полосе,
+      // чтобы отряд не превращался в «паровозик» из наложенных фигур.
+      const nx = W * pt.x + (a.laneOffset || 0) * W, ny = H * pt.y;
       // Направление взгляда — по горизонтальному смещению
       if (Math.abs(nx - a.x) > 0.4) a.faceDir = nx > a.x ? 1 : -1;
       a.x = nx;
@@ -1919,6 +1927,98 @@ function renderDoll(g) {
   bindSlotTips(g);
 }
 
+// ==================== СЕЛЕКТОР СНАРЯЖЕНИЯ ====================
+// Клик по ячейке конечности (пустой или занятой) открывает всплывающий
+// селектор со всем подходящим снаряжением из инвентаря.
+let SLOT_PICKER = { open: false, slot: null };
+
+function openSlotPicker(slot) {
+  const glad = getSelectedGlad();
+  if (!glad) return;
+  hideSlotTip();
+  SLOT_PICKER.open = true;
+  SLOT_PICKER.slot = slot;
+
+  // Собираем подходящие предметы из инвентаря
+  const items = STATE.inventory.filter(it => {
+    if (slot === 'offhand') return it.slot === 'offhand' || it.slot === 'weapon';
+    if (slot === 'weapon') return it.slot === 'weapon' && !it.offhandOnly;
+    return it.slot === slot;
+  });
+
+  const cur = glad.equip[slot];
+  const slotName = SLOT_NAMES[slot] || slot;
+
+  let listHtml;
+  if (!items.length && !cur) {
+    listHtml = `<div class="sp-empty">Нет подходящих предметов.<br>Купите снаряжение в кузнице.</div>`;
+  } else {
+    listHtml = items.sort((a, b) => (b.tier || 0) - (a.tier || 0)).map(it => {
+      const check = canEquipItem(glad, it);
+      const t = TIER_INFO[it.tier] || TIER_INFO[1];
+      return `<div class="sp-item ${check.ok ? '' : 'locked'}"
+        onclick="equipFromPicker('${it.uid}')">
+        <div class="spi-icon">${itemIconCanvas(it, 36)}</div>
+        <div class="spi-body">
+          <div class="spi-top">
+            <span class="spi-name">${it.name}</span>
+            <span class="tier-badge" style="color:${t.color};border-color:${t.color}">${t.stars}</span>
+          </div>
+          <div class="spi-stat">${itemStatLine(it)}</div>
+          ${!check.ok ? `<div class="spi-req req-bad">не хватает характеристик</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  const unequipBtn = cur
+    ? `<button class="sp-unequip" onclick="unequipFromPicker()">✕ Снять «${cur.name}»</button>`
+    : '';
+
+  const picker = document.getElementById('slot-picker');
+  if (!picker) return;
+  picker.innerHTML = `
+    <div class="sp-head">
+      <span class="sp-title">${slotName}</span>
+      <button class="sp-close" onclick="closeSlotPicker()">✕</button>
+    </div>
+    ${unequipBtn}
+    <div class="sp-list">${listHtml}</div>
+  `;
+  picker.style.display = 'block';
+  paintItemCanvases(picker);
+}
+
+function closeSlotPicker() {
+  SLOT_PICKER.open = false;
+  SLOT_PICKER.slot = null;
+  const picker = document.getElementById('slot-picker');
+  if (picker) picker.style.display = 'none';
+}
+
+function equipFromPicker(uid) {
+  const slot = SLOT_PICKER.slot;
+  if (!slot) return;
+  closeSlotPicker();
+  equipItemToSlot(uid, slot);
+}
+
+function unequipFromPicker() {
+  const slot = SLOT_PICKER.slot;
+  if (!slot) return;
+  closeSlotPicker();
+  unequipItem(slot);
+}
+
+// Закрытие селектора по клику вне него
+document.addEventListener('click', ev => {
+  if (!SLOT_PICKER.open) return;
+  const picker = document.getElementById('slot-picker');
+  if (picker && picker.contains(ev.target)) return;
+  if (ev.target.closest('.doll-slot')) return;
+  closeSlotPicker();
+});
+
 // ---------- Тултипы для экипированного снаряжения ----------
 let _slotTipsRoot = null;
 
@@ -1944,6 +2044,13 @@ function bindSlotTips(g) {
     });
     slotEl.addEventListener('mouseleave', () => {
       hideSlotTip();
+    });
+    // Клик по ячейке (пустой или занятой) открывает селектор снаряжения
+    slotEl.addEventListener('click', () => {
+      const slot = slotEl.dataset.slot;
+      if (!slot) return;
+      if (SLOT_PICKER.open && SLOT_PICKER.slot === slot) { closeSlotPicker(); return; }
+      openSlotPicker(slot);
     });
   });
 }
@@ -3251,6 +3358,9 @@ function openChest(id) {
     sfx(res.tier >= 4 ? 'levelup' : 'open');
     const out = document.getElementById('chest-result');
     if (out) out.classList.add('show');
+    // Отдельное всплывающее уведомление о выигрыше — чтобы приз
+    // было точно видно, даже если игрок не смотрит на панель результата.
+    showChestWin(res.item, res.tier);
   };
 
   // Ставим ленту в старт, затем одним переходом раскручиваем до приза
@@ -3278,7 +3388,75 @@ function closeChestModal() {
   if (m) m.style.display = 'none';
 }
 
-// ==================== ПИВО И РАЗГОВОРЫ ====================
+// ==================== УВЕДОМЛЕНИЕ О ВЫИГРЫШЕ СУНДУКА ====================
+let _chestWinTimer = null;
+
+function showChestWin(item, tier) {
+  const box = document.getElementById('chest-win');
+  if (!box || !item) return;
+  const t = TIER_INFO[tier] || TIER_INFO[1];
+  box.querySelector('.chest-win-name').textContent = item.name;
+  box.querySelector('.chest-win-stat').innerHTML =
+    `<span style="color:${t.color}">${t.stars} ${t.name}</span> • ${itemStatLine(item)}`;
+  box.classList.add('show');
+  clearTimeout(_chestWinTimer);
+  // Через 6 секунд само скрывается — чтобы не мешало дальше крутить
+  _chestWinTimer = setTimeout(closeChestWin, 6000);
+}
+
+function closeChestWin() {
+  const box = document.getElementById('chest-win');
+  if (box) box.classList.remove('show');
+  clearTimeout(_chestWinTimer);
+}
+
+// ==================== КНОПОЧНЫЕ ТУЛТИПЫ ====================
+let _btnTipEl = null;
+
+function ensureBtnTip() {
+  if (!_btnTipEl || !document.body.contains(_btnTipEl)) {
+    _btnTipEl = document.createElement('div');
+    _btnTipEl.id = 'btn-tip';
+    _btnTipEl.className = 'btn-tip';
+    document.body.appendChild(_btnTipEl);
+  }
+  return _btnTipEl;
+}
+
+function showBtnTip(ev) {
+  const btn = ev.target.closest('[data-tip]');
+  if (!btn) { hideBtnTip(); return; }
+  const text = btn.getAttribute('data-tip');
+  if (!text) { hideBtnTip(); return; }
+  const el = ensureBtnTip();
+  el.innerHTML = text;
+  el.classList.add('show');
+  const pad = 10;
+  const w = el.offsetWidth || 200;
+  const h = el.offsetHeight || 40;
+  let x = ev.clientX + pad;
+  let y = ev.clientY - h - pad;
+  if (x + w > window.innerWidth - 8) x = ev.clientX - w - pad;
+  if (y < 8) y = ev.clientY + pad;
+  el.style.left = Math.max(8, x) + 'px';
+  el.style.top = Math.max(8, y) + 'px';
+}
+
+function hideBtnTip() {
+  const el = document.getElementById('btn-tip');
+  if (el) el.classList.remove('show');
+}
+
+// Авто-подписка на кнопки: ищем все [data-tip] при загрузке
+document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('mouseover', showBtnTip);
+  document.addEventListener('mousemove', ev => {
+    if (ev.target.closest('[data-tip]')) showBtnTip(ev);
+  });
+  document.addEventListener('mouseleave', ev => {
+    if (!ev.target.closest('[data-tip]')) hideBtnTip();
+  }, true);
+});
 let currentTalker = null;
 
 function drinkBeer() {

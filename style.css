@@ -384,6 +384,23 @@ main { flex: 1; overflow: hidden; position: relative; }
   flex-shrink: 0;
 }
 .round-num { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+
+/* Живой шанс победы в бою: переоценивается по ходу боя, а не висит
+   статичной цифрой, снятой до выхода на песок. */
+.win-meter {
+  display: flex; flex-direction: column; align-items: center;
+  line-height: 1.1;
+  padding: 2px 9px;
+  border: 1px solid #4a3b2a;
+  border-radius: 3px;
+  background: rgba(12,10,8,.7);
+  cursor: help;
+}
+.win-meter b { font-size: 13px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.win-meter small { font-size: 8px; color: var(--muted); white-space: nowrap; }
+.win-meter.good b { color: var(--green); }
+.win-meter.even b { color: var(--gold); }
+.win-meter.hard b { color: #ff6b6b; }
 .round-phase {
   font-size: 11px; font-weight: 900; letter-spacing: .6px; color: var(--gold);
   text-transform: uppercase; white-space: nowrap;

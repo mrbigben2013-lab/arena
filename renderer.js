@@ -333,9 +333,12 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
   // вертикально. Иначе на замахе лук уезжает за корпус и пропадает.
   const wVis = eq.weapon ? (eq.weapon.vis || WEAPON_VIS[eq.weapon.shape] || WEAPON_VIS.gladius) : null;
   const isBowUnit = !!(wVis && wVis.head === 'bow');
+  // Исправлено: при swing > 0 оружие разворачивается ОТ бойца (наружу),
+  // а не к нему. Раньше формула была зеркальной — герой «машет мечом к себе»,
+  // что выглядело неестественно.
   const swingAngle = isBowUnit
     ? (-0.98 + a.swing * 0.26 - a.victory * 0.35 + armWalkR * 0.4)
-    : (-0.3 + a.swing * 1.6 - a.victory * 1.9 + armWalkR);
+    : (0.3 - a.swing * 1.6 + a.victory * 1.9 + armWalkR);
   // Положение кисти в системе тела — по нему ставим лук.
   // Отрубленной рукой лук не удержать.
   const bowHand = (isBowUnit && !armR.lost) ? {

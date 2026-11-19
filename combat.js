@@ -187,6 +187,39 @@ function estimateWinChance(playerGlads, enemyUnits, tier) {
   return clamp(3, 96, Math.round(chance * 100));
 }
 
+// Живой шанс победы ПО ХОДУ боя. Раньше на экране висела статичная цифра,
+// снятая ещё до выхода на песок: она не менялась, даже когда отряд уже
+// выбил двоих врагов или, наоборот, остался один. Это особенно вводило в
+// заблуждение в автобое, где игрок смотрит в основном на неё.
+// Теперь считаю силу по ФАКТИЧЕСКОМУ состоянию: текущее HP, утраченные
+// конечности и выбывшие из боя бойцы.
+function liveWinChance() {
+  if (!COMBAT.active) return 0;
+  const alive = side => COMBAT.units.filter(u => u.side === side && u.alive && !u.fled);
+  const pAlive = alive('player');
+  const eAlive = alive('enemy');
+  if (!pAlive.length) return 0;
+  if (!eAlive.length) return 100;
+  const power = u => {
+    const g = u.glad;
+    const hpFrac = clamp01((g.hp || 0) / Math.max(1, g.maxHp || 1));
+    return Math.max(1, unitPower(g)) * (0.25 + 0.75 * hpFrac);
+  };
+  const pPow = pAlive.reduce((s, u) => s + power(u), 0);
+  const ePow = eAlive.reduce((s, u) => s + power(u), 0);
+  const ratio = pPow / Math.max(1, ePow);
+  const chance = 1 / (1 + Math.pow(0.45 / Math.max(0.01, ratio), 2.1));
+  return clamp(1, 99, Math.round(chance * 100));
+}
+
+// Подпись к проценту: объясняет, что именно означает цифра
+function winChanceLabel(pct) {
+  if (pct >= 70) return 'перевес на нашей стороне';
+  if (pct >= 45) return 'шансы равны';
+  if (pct >= 25) return 'приходится туго';
+  return 'бой почти проигран';
+}
+
 // ==================== ЮНИТЫ ====================
 function makeUnit(glad, side, step, id) {
   ensureLimbs(glad);
@@ -630,6 +663,7 @@ function renderDeploy() {
         <button class="chip ${STATE.modeSel === 'manual' ? 'on' : ''}" onclick="setMode('manual'); renderDeploy()">🎮 Ручной</button>
         <button class="chip ${STATE.modeSel === 'auto' ? 'on' : ''}" onclick="setMode('auto'); renderDeploy()">🤖 Автобой</button>
       </div>
+      <button class="wide-btn" onclick="cancelDeploy()" data-tip="Вернуться к выбору сложности, бой не начнётся">← Назад</button>
       <button class="wide-btn primary" onclick="confirmDeploy()">⚔️ В бой</button>
     </div>
   `;
@@ -806,6 +840,17 @@ function confirmDeploy() {
   const match = DEPLOY.match || buildMatch(DEPLOY.arenaId, DEPLOY.tierId, DEPLOY.boss);
   if (!match) return alert('Не удалось подобрать бой.');
   startCombat(match, STATE.modeSel, DEPLOY.slots.slice());
+}
+
+// Отмена подготовки к бою: закрываем окно и возвращаемся к выбору сложности
+function cancelDeploy() {
+  const modal = document.getElementById('deploy-modal');
+  if (modal) modal.style.display = 'none';
+  stopDeployAnim();
+  DEPLOY.match = null;
+  DEPLOY.boss = null;
+  sfx('click');
+  goTo('arena');
 }
 
 // ==================== СТАРТ ====================
@@ -1458,7 +1503,7 @@ async function aiAct(unit) {
     }
 
     const aggression = COMBAT.mode === 'auto'
-      ? (COMBAT.winChance < 35 ? 0.55 : COMBAT.winChance < 60 ? 0.32 : 0.16)
+      ? (liveWinChance() < 35 ? 0.55 : liveWinChance() < 60 ? 0.32 : 0.16)
       : (unit.boss ? 0.4 : 0.18);
     const heavy = Math.random() < aggression && unit.ap >= unit.weapon.apCost + 2;
     unit.ap -= unit.weapon.apCost + (heavy ? 2 : 0);
@@ -2628,7 +2673,15 @@ function updateCombatHUD() {
 
   const now = performance.now();
   const readyCount = playerUnitsAlive().filter(u => now >= (u.cdUntil || 0)).length;
-  if (rb) rb.innerHTML = `<span class="round-num">Бой • ${COMBAT.winChance}% шанс</span>
+  // Живой шанс победы: пересчитывается по текущему состоянию боя,
+  // а не висит цифрой, снятой до выхода на песок. В автобое это
+  // главный индикатор, поэтому он должен отражать реальность.
+  const live = COMBAT.over ? COMBAT.winChance : liveWinChance();
+  const lvClass = live >= 65 ? 'good' : live >= 40 ? 'even' : 'hard';
+  if (rb) rb.innerHTML = `<span class="round-num">Бой • раунд ${COMBAT.round}</span>
+    <span class="win-meter ${lvClass}" title="Живой шанс победы: переоценивается каждый ход по HP и составу отрядов">
+      <b>${live}%</b><small>${winChanceLabel(live)}</small>
+    </span>
     <span class="round-phase player">${readyCount ? 'ГОТОВЫ БИТЬ' : 'ПЕРЕЗАРЯДКА'}</span>
     <button class="mode-toggle ${COMBAT.mode}" onclick="toggleCombatMode()" title="Переключить автобой / ручное управление">
       ${COMBAT.mode === 'auto' ? '🤖 авто' : '🎮 ручной'}
