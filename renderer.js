@@ -24,6 +24,26 @@ function shade(hex, amt) {
   return `rgb(${r},${g},${b})`;
 }
 
+// Полупрозрачный оттенок того же цвета. Нужен для контуров кожи:
+// сплошная тёмная линия читается как шов между частями тела, а мягкая
+// полупрозрачная тень — как естественный край объёма.
+function shadeA(hex, amt, alpha) {
+  if (!hex || hex[0] !== '#') return hex;
+  const h = hex.replace('#', '');
+  const n = parseInt(h.length === 3 ? h.split('').map(c => c + c).join('') : h, 16);
+  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  if (amt >= 0) {
+    r = r + (255 - r) * amt;
+    g = g + (255 - g) * amt;
+    b = b + (255 - b) * amt;
+  } else {
+    r = r * (1 + amt);
+    g = g * (1 + amt);
+    b = b * (1 + amt);
+  }
+  return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${alpha})`;
+}
+
 function roundRect(ctx, x, y, w, h, r) {
   const rr = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
   ctx.beginPath();
@@ -39,9 +59,129 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function limb(ctx, x1, y1, x2, y2, w, color) {
+// Конечность как единая форма: осевая линия плюс профиль толщины.
+// Два отдельных отрезка с круглым суставом посередине читались как
+// сочленённая трубка. Живая рука — это один плавный силуэт, который
+// расширяется у плеча и сужается к запястью.
+function limbShape(ctx, pts, widths, color) {
+  // Уплотнение профиля: между заданными точками вставляем промежуточные
+  // по сплайну Catmull-Rom. Форма остаётся того же объёма, но контур
+  // идёт плавно — без изломов на локте и колене.
+  const dense = (p, w) => {
+    const op = [], ow = [];
+    const catmull = (p0, p1, p2, p3, t) => {
+      const t2 = t * t, t3 = t2 * t;
+      return 0.5 * ((2 * p1) + (-p0 + p2) * t +
+        (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+        (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+    };
+    for (let i = 0; i < p.length - 1; i++) {
+      const p0 = p[Math.max(0, i - 1)];
+      const p1 = p[i];
+      const p2 = p[i + 1];
+      const p3 = p[Math.min(p.length - 1, i + 2)];
+      const steps = 4;
+      for (let s = 0; s < steps; s++) {
+        const t = s / steps;
+        op.push([catmull(p0[0], p1[0], p2[0], p3[0], t), catmull(p0[1], p1[1], p2[1], p3[1], t)]);
+        ow.push(w[i] + (w[i + 1] - w[i]) * t);
+      }
+    }
+    op.push(p[p.length - 1]);
+    ow.push(w[w.length - 1]);
+    return [op, ow];
+  };
+  const res = dense(pts, widths);
+  pts = res[0];
+  widths = res[1];
+
+  const n = pts.length;
+  if (n < 2) return;
+
+  // Нормали к осевой линии в каждой точке
+  const norm = [];
+  for (let i = 0; i < n; i++) {
+    const p = pts[i];
+    const a = pts[Math.max(0, i - 1)];
+    const b = pts[Math.min(n - 1, i + 1)];
+    let dx = b[0] - a[0], dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len; dy /= len;
+    norm.push([-dy, dx]);
+  }
+
+  const left = [], right = [];
+  for (let i = 0; i < n; i++) {
+    const w = widths[i] / 2;
+    left.push([pts[i][0] + norm[i][0] * w, pts[i][1] + norm[i][1] * w]);
+    right.push([pts[i][0] - norm[i][0] * w, pts[i][1] - norm[i][1] * w]);
+  }
+
+  const path = () => {
+    ctx.beginPath();
+    // Точки уже лежат на сплайне, поэтому обычный lineTo даёт гладкий
+    // контур: мелкий шаг сглаживает изломы, не срезая объём.
+    ctx.moveTo(left[0][0], left[0][1]);
+    for (let i = 1; i < n; i++) ctx.lineTo(left[i][0], left[i][1]);
+    // Скругление на дальнем конце
+    const endW = widths[n - 1] / 2;
+    const ang = Math.atan2(pts[n - 1][1] - pts[n - 2][1], pts[n - 1][0] - pts[n - 2][0]);
+    ctx.arc(pts[n - 1][0], pts[n - 1][1], endW, ang - Math.PI / 2, ang + Math.PI / 2, false);
+    for (let i = n - 1; i >= 0; i--) ctx.lineTo(right[i][0], right[i][1]);
+    // Проксимальный конец скругляем, но радиусом меньше половины ширины:
+    // полный полукруг вылезал за плечо и читался тёмным блоком.
+    const startW = widths[0] * 0.34;
+    const ang2 = Math.atan2(pts[0][1] - pts[1][1], pts[0][0] - pts[1][0]);
+    ctx.arc(pts[0][0], pts[0][1], startW, ang2 - Math.PI / 2, ang2 + Math.PI / 2, false);
+    ctx.closePath();
+  };
+
+  path();
+  ctx.fillStyle = color;
+  ctx.fill();
+  // Мультяшный контур: сплошная тёмная линия по всему силуэту.
+  // Именно она, а не толщина, читается как «рисованный персонаж»:
+  // фигура отделяется от фона и от соседних частей тела.
   ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = w + 4.5;
+  ctx.lineWidth = Math.max(2.6, widths[0] * 0.18);
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // Объём: два слоя. Первый — поперёк оси (свет сверху-слева), второй —
+  // вдоль оси с затемнением к запястью. Один слабый слой давал плоскую
+  // «наклейку» вместо руки.
+  ctx.save();
+  path();
+  ctx.clip();
+  const gx = pts[0][0], gy = pts[0][1];
+  const grad = ctx.createLinearGradient(
+    gx + norm[0][0] * widths[0] * 0.55, gy + norm[0][1] * widths[0] * 0.55,
+    gx - norm[0][0] * widths[0] * 0.55, gy - norm[0][1] * widths[0] * 0.55);
+  grad.addColorStop(0, 'rgba(255,248,236,0.22)');
+  grad.addColorStop(0.34, 'rgba(255,248,236,0.05)');
+  grad.addColorStop(0.62, 'rgba(255,255,255,0)');
+  grad.addColorStop(1, 'rgba(44,24,12,0.34)');
+  ctx.fillStyle = grad;
+  const bb = 120;
+  ctx.fillRect(gx - bb, gy - bb, bb * 2, bb * 2);
+
+  // Продольная тень: у плеча кожа светлее, к кисти темнее — так рука
+  // читается как объём, уходящий вглубь.
+  const tip = pts[n - 1];
+  const along = ctx.createLinearGradient(gx, gy, tip[0], tip[1]);
+  along.addColorStop(0, 'rgba(255,250,240,0.10)');
+  along.addColorStop(0.55, 'rgba(255,255,255,0)');
+  along.addColorStop(1, 'rgba(60,32,16,0.18)');
+  ctx.fillStyle = along;
+  ctx.fillRect(gx - bb, gy - bb, bb * 2, bb * 2);
+  ctx.restore();
+}
+
+function limb(ctx, x1, y1, x2, y2, w, color) {
+  // Контур тонкий и пропорциональный толщине: раньше он был постоянным
+  // (+4.5), из-за чего тонкие руки выглядели обведёнными маркером.
+  ctx.strokeStyle = shade(color, -0.62);
+  ctx.lineWidth = w + Math.max(1.6, w * 0.22);
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(x1, y1);
@@ -54,9 +194,170 @@ function limb(ctx, x1, y1, x2, y2, w, color) {
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.stroke();
+
+  // Мягкий объём: светлая полоса вдоль верхней части конечности
+  ctx.strokeStyle = 'rgba(255,246,232,0.09)';
+  ctx.lineWidth = Math.max(1, w * 0.26);
+  ctx.beginPath();
+  ctx.moveTo(x1 + w * 0.16, y1 - w * 0.18);
+  ctx.lineTo(x2 + w * 0.16, y2 - w * 0.18);
+  ctx.stroke();
+}
+
+// Рука из двух сегментов: плечо толще, предплечье тоньше, локоть —
+// сустав, а не место стыка двух линий. Так рука читается как рука,
+// а не как гнущаяся труба.
+function drawArmAnatomy(ctx, ex, ey, hx, hy, w, color, side) {
+  const s = side || 1;
+  const upperW = w;
+  const foreW = w * 0.78;
+  const elbowX = ex * 0.52;
+  const elbowY = ey * 0.52;
+
+  // Плечо
+  limb(ctx, 0, 0, elbowX, elbowY, upperW, color);
+  // Предплечье
+  limb(ctx, elbowX, elbowY, ex, ey, foreW, color);
+
+  // Локоть: небольшой сустав с тенью
+  ctx.fillStyle = shade(color, -0.06);
+  ctx.beginPath();
+  ctx.ellipse(elbowX, elbowY, foreW * 0.52, foreW * 0.46,
+    Math.atan2(ey - 0, ex - 0), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = shade(color, -0.45);
+  ctx.lineWidth = 0.9;
+  ctx.stroke();
+
+  // Кисть: ладонь с четырьмя согнутыми пальцами
+  const handAng = Math.atan2(hy - ey, hx - ex);
+  ctx.save();
+  ctx.translate(hx, hy);
+  ctx.rotate(handAng);
+  const hw = foreW * 0.60;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, hw, hw * 0.92, 0, 0, Math.PI * 2);
+  ctx.fillStyle = shade(color, 0.04);
+  ctx.fill();
+  ctx.strokeStyle = shade(color, -0.5);
+  ctx.lineWidth = 1.1;
+  ctx.stroke();
+  // Пальцы: короткие дуги поперёк ладони
+  ctx.strokeStyle = shade(color, -0.34);
+  ctx.lineWidth = 0.9;
+  for (let i = 0; i < 3; i++) {
+    const t = -0.42 + i * 0.42;
+    ctx.beginPath();
+    ctx.moveTo(hw * 0.20, t * hw);
+    ctx.quadraticCurveTo(hw * 0.72, t * hw * 1.1, hw * 0.86, t * hw * 1.3);
+    ctx.stroke();
+  }
+  // Большой палец
+  ctx.beginPath();
+  ctx.moveTo(-hw * 0.2, -hw * 0.55);
+  ctx.quadraticCurveTo(hw * 0.28, -hw * 0.92, hw * 0.55, -hw * 0.42);
+  ctx.stroke();
+  ctx.restore();
 }
 
 const BUILD_W = { slim: 0.84, normal: 1, muscular: 1.1, heavy: 1.22 };
+
+// ==================== КИСТЬ-КУЛАК ====================
+// Кисть рисуется сжатым кулаком: округлая масса ладони, гребень
+// согнутых пальцев с тыльной стороны и большой палец, лежащий поперёк.
+// Отдельные пальцы не рисуем — в этом масштабе они превращаются в
+// частокол штрихов и читаются хуже, чем один плотный кулак.
+// dir = 1 — правая рука, -1 — левая. rot — поворот кисти.
+function drawHand(ctx, hx, hy, armW, color, dir, rot) {
+  const s = dir || 1;
+  // Пропорции живого кулака: он не круглый шар, а слегка вытянутый
+  // по вертикали блок — ширина примерно равна длине ладони, а высота
+  // чуть больше за счёт согнутых пальцев.
+  const R = armW * 0.50;
+
+  ctx.save();
+  ctx.translate(hx, hy);
+  ctx.rotate((rot == null ? 0 : rot) + 0.10 * s);
+
+  // --- Масса кулака: скошенный сверху блок, а не окружность.
+  // Верхняя грань плоская (костяшки), низ округлый (основание ладони).
+  const fistPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.86, R * 0.44);
+    ctx.quadraticCurveTo(-R * 1.04, -R * 0.06, -R * 0.94, -R * 0.60);
+    // Плоская верхняя грань с мягкими углами
+    ctx.quadraticCurveTo(-R * 0.86, -R * 0.94, -R * 0.36, -R * 0.98);
+    ctx.lineTo(R * 0.44, -R * 0.96);
+    ctx.quadraticCurveTo(R * 0.90, -R * 0.90, R * 0.98, -R * 0.52);
+    ctx.quadraticCurveTo(R * 1.06, R * 0.04, R * 0.86, R * 0.48);
+    ctx.quadraticCurveTo(R * 0.56, R * 0.94, 0, R * 0.94);
+    ctx.quadraticCurveTo(-R * 0.60, R * 0.92, -R * 0.86, R * 0.44);
+    ctx.closePath();
+  };
+
+  fistPath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = shadeA(color, -0.55, 0.40);
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // --- Объём: свет сверху-слева, тень снизу-справа
+  ctx.save();
+  fistPath();
+  ctx.clip();
+  const pg = ctx.createLinearGradient(-R * 0.8, -R, R * 0.9, R);
+  pg.addColorStop(0, 'rgba(255,250,242,0.30)');
+  pg.addColorStop(0.40, 'rgba(255,255,255,0)');
+  pg.addColorStop(1, 'rgba(44,24,12,0.36)');
+  ctx.fillStyle = pg;
+  ctx.fillRect(-R * 2, -R * 2, R * 4, R * 4);
+
+  // --- Пальцы: четыре вертикальные канавки на лицевой стороне кулака.
+  // Именно они читаются как сжатые пальцы; горизонтальные штрихи давали
+  // «исцарапанный шар».
+  const fingers = 4;
+  const topY = -R * 0.92;
+  const botY = R * 0.66;
+  for (let i = 1; i < fingers; i++) {
+    const fx = -R * 0.74 + (i * R * 1.52) / fingers;
+    // Тень в борозде — мягкая, чтобы кулак не выглядел рубленым
+    ctx.strokeStyle = shadeA(color, -0.55, 0.20);
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(fx, topY + R * 0.20);
+    ctx.quadraticCurveTo(fx + R * 0.04, R * 0.02, fx, botY - R * 0.16);
+    ctx.stroke();
+    // Свет на гребне пальца рядом с бороздой
+    ctx.strokeStyle = 'rgba(255,250,242,0.13)';
+    ctx.lineWidth = R * 0.14;
+    ctx.beginPath();
+    ctx.moveTo(fx + R * 0.17, topY + R * 0.24);
+    ctx.quadraticCurveTo(fx + R * 0.21, R * 0.02, fx + R * 0.17, botY - R * 0.20);
+    ctx.stroke();
+  }
+
+  // --- Костяшки: плоский светлый гребень по верхней грани
+  ctx.strokeStyle = 'rgba(255,250,242,0.28)';
+  ctx.lineWidth = R * 0.14;
+  ctx.beginPath();
+  ctx.moveTo(-R * 0.62, -R * 0.84);
+  ctx.quadraticCurveTo(0, -R * 0.90, R * 0.62, -R * 0.82);
+  ctx.stroke();
+  // Тень под костяшками — отделяет их от пальцев
+  ctx.strokeStyle = shadeA(color, -0.5, 0.22);
+  ctx.lineWidth = R * 0.08;
+  ctx.beginPath();
+  ctx.moveTo(-R * 0.66, -R * 0.66);
+  ctx.quadraticCurveTo(0, -R * 0.72, R * 0.66, -R * 0.64);
+  ctx.stroke();
+  ctx.restore();
+
+  // --- Большой палец не рисуем отдельно: в этом масштабе он читался
+  // как нарост сбоку кулака. Масса кулака и борозды пальцев уже дают
+  // нужное впечатление сжатой кисти.
+  ctx.restore();
+}
 
 // Состояние конечностей: { hp, max, lost }
 function limbState(glad, id) {
@@ -120,9 +421,18 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
   const skin = glad.skinColor || '#f0b183';
   const skinDark = shade(skin, -0.2);
   const bw = BUILD_W[glad.build] || 1;
-  const shoulder = (female ? 23 : 26) * bw * breathS;
-  const waist = (female ? 15 : 18) * bw;
-  const headR = female ? 25 : 26.5;
+  // Плечи ≈ 1.5 ширины головы у мужчин и 1.35 у женщин — это уже
+  // стилизованная пропорция: фигура держит крупную голову, а не
+  // выглядит насаженной на палку. Талия уже плеч на треть.
+  const shoulder = (female ? 25.5 : 30) * bw * breathS;
+  // У женщин талия уже, а бёдра заметно шире плеч — силуэт «песочные
+  // часы». Мужская фигура почти прямая, бёдра чуть шире талии.
+  const waist = (female ? 13.5 : 17) * bw;
+  // Голова — около 1/3.4 роста: мультяшная, крупная, с читаемым лицом.
+  // Лаконичный стиль держится на трёх вещах: крупная голова, простые
+  // крупные формы тела и единый жирный контур. Мелкая детализация в
+  // этом масштабе только шумит, поэтому её сознательно немного.
+  const headR = female ? 22.4 : 23.4;
 
   const legL = limbState(glad, 'legL');
   const legR = limbState(glad, 'legR');
@@ -193,103 +503,51 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
 
   const lean = a.lunge * 5 + walkLean;
   const crouch = a.crouch * 6;
-  const hipY = -32 + crouch;
+  // Пропорции скелета. Раньше таз стоял на -32, а голова на -108 при
+  // радиусе 26.5: рост выходил ~127 единиц при голове в 53 — меньше
+  // трёх голов, отсюда и «фигурка». Теперь ноги длиннее торса,
+  // голова ~1/5 роста — как у stylized-realistic персонажа.
+  // Мультяшный сдвиг: ноги короче, голова крупнее (~1/4.5 роста).
+  // Фигура сразу читается как персонаж, а не как манекен, и позы
+  // (замах, блок, уклон) видны на силуэте с первого взгляда.
+  const hipY = -68 + crouch;
   const footY = -5;
+  // Шея видна примерно на 7 единиц — половина радиуса головы.
+  // Подбородок при этом слегка перекрывает её сверху.
+  const headY = hipY - 50 - headR * 1.02;
 
   // ============ НОГИ ============
   const legColor = eq.legs ? eq.legs.color : skin;
   const stepAmp = a.walk * 9;
   const liftAmp = a.walk * 5.5;
 
+  // Бёдра выводятся из низа торса, а не задаются отдельными числами:
+  // раньше ноги были шире таза и торчали по бокам. Теперь внешний край
+  // бедра совпадает с краем торса, стык идёт ровно.
+  const hipOuter = female ? waist * 1.52 : waist * 1.20;
+  const hipHalf = hipOuter * 0.45;
+  // 1.46 — коэффициент толщины бедра в drawLegSegmented
+  const legW = Math.max(9, (hipOuter - hipHalf) * 2 / 1.46 * 1.32);
+
   // Фазы ног: противоположные. sin — горизонталь, cos>0 — фаза переноса.
   const phaseL = walkCycle + Math.PI;
   const phaseR = walkCycle;
 
-  const footLX = -8 + Math.sin(phaseL) * stepAmp;
-  const footRX = 8 + Math.sin(phaseR) * stepAmp;
+  const footLX = -hipHalf + Math.sin(phaseL) * stepAmp;
+  const footRX = hipHalf + Math.sin(phaseR) * stepAmp;
   const liftL = Math.max(0, Math.cos(phaseL)) * liftAmp;
   const liftR = Math.max(0, Math.cos(phaseR)) * liftAmp;
 
-  const geomL = { hipX: -8, hipY, footX: footLX, footY: footY - liftL, lift: liftL / Math.max(1, liftAmp || 1), lost: legL.lost };
-  const geomR = { hipX: 8, hipY, footX: footRX, footY: footY - liftR, lift: liftR / Math.max(1, liftAmp || 1), lost: legR.lost };
+  const geomL = { hipX: -hipHalf, hipY, footX: footLX, footY: footY - liftL, lift: liftL / Math.max(1, liftAmp || 1), lost: legL.lost };
+  const geomR = { hipX: hipHalf, hipY, footX: footRX, footY: footY - liftR, lift: liftR / Math.max(1, liftAmp || 1), lost: legR.lost };
 
-  if (!legL.lost) drawLegSegmented(ctx, geomL, 13, legColor);
-  else drawStump(ctx, -8, hipY, 13, legColor, 'down');
-  if (!legR.lost) drawLegSegmented(ctx, geomR, 14, legColor);
-  else drawStump(ctx, 8, hipY, 14, legColor, 'down');
-
+  if (!legL.lost) drawLegSegmented(ctx, geomL, legW, legColor);
+  else drawStump(ctx, -hipHalf, hipY, legW, legColor, 'down');
+  if (!legR.lost) drawLegSegmented(ctx, geomR, legW, legColor);
+  else drawStump(ctx, hipHalf, hipY, legW, legColor, 'down');
   drawLegArmorNew(ctx, eq.legs, legColor, [geomL, geomR]);
 
-  // ============ ТОРС ============
-  const bodyColor = eq.body ? eq.body.color : skin;
-  ctx.save();
-  ctx.translate(lean, 0);
-
-  ctx.beginPath();
-  ctx.moveTo(-waist, hipY);
-  ctx.quadraticCurveTo(-shoulder * 1.3, hipY - 30, -shoulder, hipY - 44);
-  ctx.quadraticCurveTo(-shoulder * 0.8, hipY - 50, -shoulder * 0.35, hipY - 51);
-  ctx.quadraticCurveTo(0, hipY - 53, shoulder * 0.35, hipY - 51);
-  ctx.quadraticCurveTo(shoulder * 0.8, hipY - 50, shoulder, hipY - 44);
-  ctx.quadraticCurveTo(shoulder * 1.3, hipY - 30, waist, hipY);
-  ctx.quadraticCurveTo(0, hipY + 5, -waist, hipY);
-  ctx.closePath();
-  ctx.fillStyle = bodyColor;
-  ctx.fill();
-  ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 4;
-  ctx.stroke();
-
-  ctx.save();
-  ctx.clip();
-  ctx.fillStyle = shade(bodyColor, -0.22);
-  ctx.beginPath();
-  ctx.ellipse(-shoulder * 0.85, hipY - 26, shoulder * 0.55, 30, 0.18, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.15)';
-  ctx.beginPath();
-  ctx.ellipse(shoulder * 0.3, hipY - 36, shoulder * 0.42, 14, -0.3, 0, Math.PI * 2);
-  ctx.fill();
-  if (female) {
-    ctx.fillStyle = 'rgba(0,0,0,0.10)';
-    ctx.beginPath(); ctx.arc(-shoulder * 0.34, hipY - 26, shoulder * 0.3, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.arc(shoulder * 0.34, hipY - 26, shoulder * 0.3, 0, Math.PI * 2); ctx.fill();
-  }
-  if (!eq.body) {
-    ctx.strokeStyle = shade(skin, -0.3);
-    ctx.lineWidth = 2.4;
-    ctx.beginPath();
-    ctx.moveTo(0, hipY - 48); ctx.lineTo(0, hipY - 12);
-    ctx.moveTo(-shoulder * 0.5, hipY - 34); ctx.quadraticCurveTo(-6, hipY - 30, -2, hipY - 32);
-    ctx.moveTo(shoulder * 0.5, hipY - 34); ctx.quadraticCurveTo(6, hipY - 30, 2, hipY - 32);
-    ctx.stroke();
-    // Голая кожа — видно татуировки и раскраску
-    drawBodyCosmetics(ctx, glad, shoulder, waist, hipY);
-  } else {
-    drawBodyArmorDetail(ctx, eq.body, shoulder, waist, hipY);
-  }
-  // Кровь на корпусе
-  drawBloodOnTorso(ctx, glad, shoulder, waist, hipY, a.blood);
-  ctx.restore();
-
-  if (!eq.body) {
-    ctx.fillStyle = '#4a3020';
-    ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 3;
-    roundRect(ctx, -waist, hipY - 6, waist * 2, 11, 3);
-    ctx.fill(); ctx.stroke();
-  }
-  ctx.restore();
-
-  // ============ ШЕЯ И ГОЛОВА ============
-  const headY = -108 + crouch;
-  if (!headS.lost) {
-    limb(ctx, 0, hipY - 46, 0, hipY - 54, female ? 13 : 15, skinDark);
-  } else {
-    drawStump(ctx, 0, hipY - 46, female ? 13 : 15, skin, 'up');
-  }
-
-  // --- Дальняя рука с оружием ---
+  // --- Дальняя рука: расчёт позы ---
   // При ходьбе рука качается в противофазе ноге.
   // Оружие живёт своей жизнью: оно тяжелее кисти, поэтому отстаёт по фазе
   // (маятник) и догоняет руку с задержкой после размаха.
@@ -298,8 +556,6 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
 
   // Сглаженное состояние снаряжения: переживает кадры, поэтому инерция
   // выглядит как настоящая, а не как телепорт угла.
-  // carry — плавный переход в «походный» хват: на ходу боец держит оружие
-  // остриём ОТ СЕБЯ (вперёд по направлению взгляда), а не задрав клинок к лицу.
   if (!glad._gear) glad._gear = { wpnLag: 0, wpnPrev: 0, shdLag: 0, shdPrev: 0, carry: 0 };
   const gear = glad._gear;
   const wpnMass = eq.weapon ? (eq.weapon.cat === 'polearm' || eq.weapon.cat === 'axe' ? 1.35 : 1) : 1;
@@ -318,60 +574,391 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
   gear.shdLag = Math.max(-0.4, Math.min(0.5, gear.shdLag));
 
   // Походный хват: оружие остриём вперёд (по направлению взгляда).
-  // ctx.scale(facing, ...) уже зеркалит контекст, поэтому +PI/2
-  // всегда направляет остриё в сторону взгляда, а не на бойца.
-  const targetCarry = Math.PI * 0.5;
-  gear.carry = gear.carry + (targetCarry - gear.carry) * (a.walk * 0.28 + 0.04);
+  // carry — доля (0..1) от походного угла: на месте боец держит клинок
+  // вертикально, на ходу плавно переводит его вперёд.
+  gear.carry = gear.carry + (a.walk - gear.carry) * 0.16;
 
   // Маятник при ходьбе: кисть уже ушла, клинок ещё догоняет
   const wpnWalkLag = a.walk * (Math.sin(walkCycle + Math.PI - 0.62) - Math.sin(walkCycle + Math.PI)) * 0.42;
   const shdWalkLag = a.walk * (Math.sin(walkCycle - 0.75) - Math.sin(walkCycle)) * 0.3;
 
-  ctx.save();
-  ctx.translate(lean, 0);
   // Лучник не машет луком как мечом: рука вытянута вперёд и держит лук
   // вертикально. Иначе на замахе лук уезжает за корпус и пропадает.
   const wVis = eq.weapon ? (eq.weapon.vis || WEAPON_VIS[eq.weapon.shape] || WEAPON_VIS.gladius) : null;
   const isBowUnit = !!(wVis && wVis.head === 'bow');
-  // Исправлено: при swing > 0 оружие разворачивается ОТ бойца (наружу),
-  // а не к нему. Раньше формула была зеркальной — герой «машет мечом к себе»,
-  // что выглядело неестественно.
+  // Копьё, трезубец и алебарда — не рубящее оружие: ими колют.
+  const isSpearUnit = !!(wVis && (wVis.head === 'spear' || wVis.head === 'trident' || wVis.head === 'halberd'));
   const swingAngle = isBowUnit
     ? (-0.98 + a.swing * 0.26 - a.victory * 0.35 + armWalkR * 0.4)
-    : (0.3 - a.swing * 1.6 + a.victory * 1.9 + armWalkR);
+    : isSpearUnit
+      // Укол: рука выносится вперёд почти горизонтально и дожимается
+      // на выпаде. Никакого замаха над головой — древко остаётся
+      // на линии боя.
+      ? (-0.95 - a.swing * 0.5 + a.victory * 0.4 + armWalkR * 0.5)
+      : (0.3 - a.swing * 1.6 + a.victory * 1.9 + armWalkR);
+  // Победа: боец вскидывает правую руку вверх, приветствуя толпу.
+  // Раньше вклад victory просто прибавлялся к боевому углу (до +1.9),
+  // и кисть уезжала за голову — читалось как вывих плеча. Теперь у
+  // победы своя целевая поза: рука поднята вверх-вперёд под 30° от
+  // вертикали, поэтому кисть проходит впереди головы и не заходит
+  // за силуэт.
+  const VICTORY_ARM_ANGLE = -2.1;
+  const armAngle = swingAngle + (VICTORY_ARM_ANGLE - swingAngle) * a.victory;
   // Положение кисти в системе тела — по нему ставим лук.
-  // Отрубленной рукой лук не удержать.
+  // Отрубленной рукой лук не удержать. Кисть живёт в точке (18, 41)
+  // относительно плечевого сустава (см. отрисовку руки).
   const bowHand = (isBowUnit && !armR.lost) ? {
-    x: shoulder * 0.86 + 7 * Math.cos(swingAngle) - 27 * Math.sin(swingAngle),
-    y: hipY - 42 + 7 * Math.sin(swingAngle) + 27 * Math.cos(swingAngle)
+    x: shoulder * 0.80 + 16.4 * Math.cos(armAngle) - 49 * Math.sin(armAngle),
+    y: hipY - 44 + 16.4 * Math.sin(armAngle) + 49 * Math.cos(armAngle)
   } : null;
-  if (!armR.lost) {
+
+  // Древковое оружие рисуем ДО корпуса: боец держит копьё за середину,
+  // поэтому комель уходит назад и скрывается за телом, а не режет грудь.
+  // Кисть и предплечье рисуются позже, поверх древка.
+  if (isSpearUnit && eq.weapon && !armR.lost) {
     ctx.save();
-    ctx.translate(shoulder * 0.86, hipY - 42);
-    ctx.rotate(swingAngle);
-    limb(ctx, 0, 0, 6, 24, 12, eq.arms ? eq.arms.color : skin);
-    drawArmSchoolDetail(ctx, eq.arms, 3, 12);
-    ctx.fillStyle = eq.arms ? shade(eq.arms.color, 0.1) : skin;
-    ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 3.5;
+    ctx.translate(lean, 0);
+    ctx.translate(shoulder * 0.80, hipY - 44);
+    ctx.rotate(armAngle);
+    ctx.translate(16.4, 49);
+    // То же уменьшение, что и у оружия в кисти: иначе копьё/алебарда
+    // перекрывали пол-арены.
+    ctx.scale(WEAPON_HAND_SCALE, WEAPON_HAND_SCALE);
+    const shaftLen = wVis.len || 94;
+    // В модели древко идёт от y=34 (комель) до y=-len (острие),
+    // значит середина — посередине этого отрезка.
+    const shaftMidY = (34 - shaftLen) / 2;
+    const thrust = a.swing || 0;
+    // Почти горизонталь: остриё вперёд и чуть вверх, комель — вниз-назад.
+    const worldAngle = Math.PI * 0.5 - 0.16 + thrust * 0.05 + gear.wpnLag * 0.06;
+    ctx.rotate(worldAngle - armAngle);
+    // Середину древка совмещаем с кистью, а не рукоять.
+    ctx.translate(-12, -shaftMidY);
+    // Укол: древко проезжает вперёд сквозь кисть (в модели «вперёд» = -y).
+    ctx.translate(0, -(thrust * 24));
+    drawWeapon(ctx, eq.weapon);
+    ctx.restore();
+  }
+
+  // ============ ШЕЯ ============
+  // Шея рисуется ДО торса: её основание уходит под воротник, поэтому
+  // она не залезает на текстуру одежды. Цвет — тот же, что у тела;
+  // объём даёт градиент, а не другой оттенок.
+  if (!headS.lost) {
+    const neckHalf = female ? 5.2 : 6.2;
+    const chinY = headY + headR * 1.02;
+    const neckTopY = chinY + 1.2;
+    const neckBaseY = hipY - 40;
+    ctx.save();
+    ctx.translate(lean, 0);
+    ctx.fillStyle = skin;
     ctx.beginPath();
-    ctx.arc(7, 27, 10, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
-    drawArmBlood(ctx, armR, 7, 27);
-    // Оружие: на ходу остриё ОТ СЕБЯ, при размахе — свободно качается.
-    // Лук рисуется отдельно, в системе тела (см. ниже).
-    if (eq.weapon && !bowHand) {
-      ctx.save();
-      ctx.translate(7, 27);
-      // Клинок идёт остриём вперёд, арбалет лежит ложем вперёд.
-      ctx.rotate(weaponHoldAngle(eq.weapon, gear, a.swing));
-      ctx.translate(-7, -27);
-      drawWeapon(ctx, eq.weapon);
-      ctx.restore();
-    }
+    ctx.moveTo(-neckHalf * 1.16, neckBaseY);
+    ctx.quadraticCurveTo(-neckHalf * 1.10, neckTopY + 4, -neckHalf * 0.92, neckTopY - 1);
+    ctx.quadraticCurveTo(0, neckTopY - 2.6, neckHalf * 0.92, neckTopY - 1);
+    ctx.quadraticCurveTo(neckHalf * 1.10, neckTopY + 4, neckHalf * 1.16, neckBaseY);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.save();
+    ctx.clip();
+    const ng = ctx.createLinearGradient(-neckHalf, 0, neckHalf, 0);
+    ng.addColorStop(0, 'rgba(255,246,232,0.16)');
+    ng.addColorStop(0.45, 'rgba(255,255,255,0)');
+    ng.addColorStop(1, 'rgba(48,26,14,0.26)');
+    ctx.fillStyle = ng;
+    ctx.fillRect(-neckHalf * 2, neckTopY - 8, neckHalf * 4, neckBaseY - neckTopY + 16);
+    const jg = ctx.createLinearGradient(0, neckTopY - 2, 0, neckTopY + 8);
+    jg.addColorStop(0, 'rgba(44,20,10,0.5)');
+    jg.addColorStop(1, 'rgba(44,20,10,0)');
+    ctx.fillStyle = jg;
+    ctx.fillRect(-neckHalf * 2, neckTopY - 2, neckHalf * 4, 10);
+    ctx.restore();
     ctx.restore();
   } else {
-    drawStump(ctx, shoulder * 0.86, hipY - 42, 12, skin, 'side');
+    drawStump(ctx, 0, hipY - 45, female ? 9 : 11, skin, 'up');
+  }
+
+  // ============ ТОРС ============
+  const bodyColor = eq.body ? eq.body.color : skin;
+  ctx.save();
+  ctx.translate(lean, 0);
+
+  // Торс строим по анатомии: трапеции от шеи к плечам, дельтовидные
+  // скругления, сужение к талии, затем подвздошные кости. Прежний
+  // «колокол» с жирной обводкой и был главным источником мультяшности.
+  const topY = hipY - 52;
+  // Плечи у женщин уже и покатее, бёдра шире — силуэт «песочные часы».
+  const delt = female ? 0.94 : 1.04;
+  const torsoPath = () => {
+    ctx.beginPath();
+    // Левое плечо → трапеция → шея
+    ctx.moveTo(-shoulder * delt, hipY - 40);
+    ctx.quadraticCurveTo(-shoulder * (delt + 0.02), hipY - 47, -shoulder * 0.70, hipY - 49);
+    ctx.quadraticCurveTo(-shoulder * 0.42, hipY - 50.5, -shoulder * 0.26, topY);
+    // Шея
+    ctx.quadraticCurveTo(0, topY - 2.0, shoulder * 0.26, topY);
+    // Правое плечо
+    ctx.quadraticCurveTo(shoulder * 0.42, hipY - 50.5, shoulder * 0.70, hipY - 49);
+    ctx.quadraticCurveTo(shoulder * (delt + 0.02), hipY - 47, shoulder * delt, hipY - 40);
+    // Бок: у женщин — резкая талия и широкий, но не «грушевидный» таз.
+    // Полуширина бедра не превышает плечо, иначе силуэт читается как юбка.
+    if (female) {
+      ctx.bezierCurveTo(shoulder * 0.94, hipY - 26, waist * 0.88, hipY - 16, waist * 1.45, hipY - 4);
+    } else {
+      ctx.bezierCurveTo(shoulder * 1.02, hipY - 24, waist * 1.02, hipY - 14, waist * 1.14, hipY - 3);
+    }
+    // Низ торса — не «подгузник», а промежность: по бокам подвздошные
+    // кости, в центре вырез между бёдрами.
+    if (female) {
+      ctx.bezierCurveTo(waist * 1.52, hipY + 2, waist * 1.10, hipY + 7, waist * 0.62, hipY + 5);
+      ctx.quadraticCurveTo(0, hipY + 2.5, -waist * 0.62, hipY + 5);
+      ctx.bezierCurveTo(-waist * 1.10, hipY + 7, -waist * 1.52, hipY + 2, -waist * 1.45, hipY - 4);
+    } else {
+      ctx.bezierCurveTo(waist * 1.20, hipY + 2, waist * 0.92, hipY + 7, waist * 0.50, hipY + 5);
+      ctx.quadraticCurveTo(0, hipY + 2.5, -waist * 0.50, hipY + 5);
+      ctx.bezierCurveTo(-waist * 0.92, hipY + 7, -waist * 1.20, hipY + 2, -waist * 1.14, hipY - 3);
+    }
+    if (female) {
+      ctx.bezierCurveTo(-waist * 0.88, hipY - 16, -shoulder * 0.94, hipY - 26, -shoulder * delt, hipY - 40);
+    } else {
+      ctx.bezierCurveTo(-waist * 1.02, hipY - 14, -shoulder * 1.02, hipY - 24, -shoulder * delt, hipY - 40);
+    }
+    ctx.closePath();
+  };
+
+  torsoPath();
+  ctx.fillStyle = bodyColor;
+  ctx.fill();
+  // Мультяшный контур корпуса: сплошная линия той же толщины, что и
+  // конечности. Полупрозрачный вариант читался как тень, а не как край.
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 3.0;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  ctx.save();
+  torsoPath();
+  ctx.clip();
+
+  // Форма: свет сверху-слева, тень по правому боку и под грудью.
+  const bodyShade = ctx.createLinearGradient(-shoulder, topY, shoulder * 1.1, hipY);
+  bodyShade.addColorStop(0, 'rgba(255,248,236,0.20)');
+  bodyShade.addColorStop(0.38, 'rgba(255,255,255,0)');
+  bodyShade.addColorStop(1, 'rgba(48,26,14,0.34)');
+  ctx.fillStyle = bodyShade;
+  ctx.fillRect(-shoulder * 1.4, topY - 8, shoulder * 2.8, hipY - topY + 22);
+
+  // Тень под грудными мышцами
+  ctx.fillStyle = 'rgba(90,48,26,0.16)';
+  ctx.beginPath();
+  ctx.ellipse(-shoulder * 0.42, hipY - 34, shoulder * 0.34, 7.5, -0.12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(shoulder * 0.44, hipY - 34, shoulder * 0.34, 7.5, 0.12, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (female) {
+    // Женская грудь: две крупные мягкие формы с естественным провисом.
+    // Рисуем внутри клипа торса, до брони: под доспехом её не видно,
+    // на голом теле она читается как анатомия.
+    const bustY = hipY - 35;
+    const bustX = shoulder * 0.38;
+    const bustR = shoulder * 0.48;
+    [-1, 1].forEach(sd => {
+      const cx = sd * bustX;
+      // Тень под грудью — по нижней дуге, чтобы форма читалась объёмом
+      ctx.fillStyle = 'rgba(78,40,20,0.34)';
+      ctx.beginPath();
+      ctx.ellipse(cx, bustY + bustR * 0.70, bustR * 1.00, bustR * 0.36, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Основной объём
+      const g = ctx.createRadialGradient(
+        cx - sd * bustR * 0.34, bustY - bustR * 0.50, bustR * 0.10,
+        cx, bustY + bustR * 0.10, bustR * 1.15);
+      g.addColorStop(0, shade(skin, 0.24));
+      g.addColorStop(0.55, skin);
+      g.addColorStop(1, shade(skin, -0.30));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(cx, bustY, bustR, bustR * 1.00, sd * 0.10, 0, Math.PI * 2);
+      ctx.fill();
+      // Нижняя складка — тонкая тёмная дуга
+      ctx.strokeStyle = 'rgba(88,44,22,0.45)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.ellipse(cx, bustY + bustR * 0.16, bustR * 0.92, bustR * 0.86, sd * 0.10, Math.PI * 0.12, Math.PI * 0.88);
+      ctx.stroke();
+      // Блик сверху-сбоку
+      ctx.fillStyle = 'rgba(255,250,240,0.30)';
+      ctx.beginPath();
+      ctx.ellipse(cx - sd * bustR * 0.34, bustY - bustR * 0.46, bustR * 0.30, bustR * 0.22, sd * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    // Линия грудины между формами
+    ctx.strokeStyle = 'rgba(96,52,30,0.36)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, hipY - 44);
+    ctx.quadraticCurveTo(0, hipY - 34, 0, hipY - 25);
+    ctx.stroke();
+  }
+  if (!eq.body) {
+    // Анатомия голого тела: грудина, край рёбер, «кубики» пресса,
+    // паховая линия. В лаконичном мультяшном стиле рельеф — это намёк,
+    // а не анатомический атлас: тонкие слабые линии читаются как объём,
+    // а плотные превращали торс в чертёж.
+    const muscleLine = shade(skin, -0.42);
+    ctx.strokeStyle = muscleLine;
+    ctx.globalAlpha = 0.26;
+    ctx.lineWidth = 1.4;
+    // Грудина
+    ctx.beginPath();
+    ctx.moveTo(0, hipY - 47);
+    ctx.quadraticCurveTo(-1.2, hipY - 36, 0, hipY - 26);
+    ctx.stroke();
+    // Ключицы
+    ctx.beginPath();
+    ctx.moveTo(-shoulder * 0.62, hipY - 46.5);
+    ctx.quadraticCurveTo(-shoulder * 0.3, hipY - 43.5, -2, hipY - 44);
+    ctx.moveTo(shoulder * 0.62, hipY - 46.5);
+    ctx.quadraticCurveTo(shoulder * 0.3, hipY - 43.5, 2, hipY - 44);
+    ctx.stroke();
+    // Край рёбер
+    ctx.beginPath();
+    ctx.moveTo(-shoulder * 0.78, hipY - 36);
+    ctx.quadraticCurveTo(-shoulder * 0.42, hipY - 30, -3, hipY - 29);
+    ctx.moveTo(shoulder * 0.78, hipY - 36);
+    ctx.quadraticCurveTo(shoulder * 0.42, hipY - 30, 3, hipY - 29);
+    ctx.stroke();
+    // Пресс: три пары сегментов
+    ctx.beginPath();
+    for (let i = 0; i < 3; i++) {
+      const y = hipY - 26 + i * 5.4;
+      ctx.moveTo(-shoulder * 0.3, y);
+      ctx.quadraticCurveTo(0, y + 1.6, shoulder * 0.3, y);
+    }
+    ctx.moveTo(0, hipY - 26); ctx.lineTo(0, hipY - 10);
+    ctx.stroke();
+    // Паховые линии
+    ctx.beginPath();
+    ctx.moveTo(-waist * 0.92, hipY - 10);
+    ctx.quadraticCurveTo(-waist * 0.4, hipY - 2, -2, hipY + 1);
+    ctx.moveTo(waist * 0.92, hipY - 10);
+    ctx.quadraticCurveTo(waist * 0.4, hipY - 2, 2, hipY + 1);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    // Голая кожа — видно татуировки и раскраску
+    drawBodyCosmetics(ctx, glad, shoulder, waist, hipY);
+  } else {
+    drawBodyArmorDetail(ctx, eq.body, shoulder, waist, hipY);
+  }
+  // Кровь на корпусе
+  drawBloodOnTorso(ctx, glad, shoulder, waist, hipY, a.blood);
+  ctx.restore();
+
+  if (!eq.body) {
+    // Набедренная повязка: мягкая ткань с естественными складками
+    const cloth = '#4a3020';
+    ctx.fillStyle = cloth;
+    ctx.beginPath();
+    ctx.moveTo(-waist * 1.02, hipY - 5);
+    ctx.quadraticCurveTo(0, hipY - 1, waist * 1.02, hipY - 5);
+    ctx.quadraticCurveTo(waist * 0.98, hipY + 7, waist * 0.6, hipY + 7.5);
+    ctx.quadraticCurveTo(0, hipY + 9, -waist * 0.6, hipY + 7.5);
+    ctx.quadraticCurveTo(-waist * 0.98, hipY + 7, -waist * 1.02, hipY - 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = shade(cloth, -0.6);
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Складки
+    ctx.strokeStyle = 'rgba(0,0,0,0.32)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(-waist * 0.6, hipY - 1);
+    ctx.quadraticCurveTo(-waist * 0.5, hipY + 4, -waist * 0.46, hipY + 7);
+    ctx.moveTo(waist * 0.2, hipY - 1.5);
+    ctx.quadraticCurveTo(waist * 0.28, hipY + 4, waist * 0.24, hipY + 7.5);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // Шея уже нарисована до торса: основание уходит под воротник,
+  // поэтому здесь её не дублируем.
+
+  // --- Дальняя рука с оружием ---
+  // Расчёт позы (gear, armAngle, bowHand) и отрисовка древкового
+  // оружия сделаны выше — до корпуса, чтобы комель уходил за спину.
+  if (!armR.lost) {
+    ctx.save();
+    ctx.translate(lean, 0);
+    ctx.translate(shoulder * 0.80, hipY - 44);
+    ctx.rotate(armAngle);
+    // Рука одной формой: дельта у плеча, узкий локоть, предплечье
+    // с утолщением и тонкое запястье. Кисть рисуется отдельно.
+    const armW = female ? 11.6 : 14.0;
+    // Рука не прямая: локоть вынесен вбок от линии плечо-кисть, поэтому
+    // сгиб виден. Профиль толщины сужается на локте (0.66) и снова
+    // набирает объём на предплечье (0.94) — именно эта «восьмёрка»
+    // читается как рука с суставом, а не как труба.
+    const armPts = [
+      [-0.6, -1.0],
+      [3.2, 8],
+      [7.6, 17],
+      [9.4, 22],     // локоть
+      [11.4, 30],
+      [13.6, 38],
+      [15.6, 45],
+      [16.4, 49]     // кисть
+    ];
+    const armWs = [armW * 1.00, armW * 1.06, armW * 0.88, armW * 0.66,
+      armW * 0.94, armW * 0.78, armW * 0.60, armW * 0.54];
+    limbShape(ctx, armPts, armWs, eq.arms ? eq.arms.color : skin);
+
+    const armCol = eq.arms ? eq.arms.color : skin;
+    // Складка на сгибе: дуга с внутренней стороны локтя
+    ctx.strokeStyle = shadeA(armCol, -0.55, 0.4);
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(5.2, 21.4);
+    ctx.quadraticCurveTo(7.4, 24.2, 10.4, 23.0);
+    ctx.stroke();
+    // Блик на двуглавой и на предплечье
+    ctx.strokeStyle = shadeA(armCol, 0.45, 0.2);
+    ctx.lineWidth = armW * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(2.6, 6);
+    ctx.quadraticCurveTo(5.2, 12, 7.2, 17);
+    ctx.stroke();
+    ctx.lineWidth = armW * 0.24;
+    ctx.beginPath();
+    ctx.moveTo(10.6, 29);
+    ctx.quadraticCurveTo(12.4, 34, 14.2, 39);
+    ctx.stroke();
+
+    drawArmSchoolDetail(ctx, eq.arms, 6, 16);
+    // Кисть рисуется отдельно: у древкового оружия она ложится ПОВЕРХ
+    // древка, чтобы было видно, что рука его обхватывает.
+    const drawFist = (rot) => {
+      const hx = 16.4, hy = 49;
+      drawHand(ctx, hx, hy, armW, eq.arms ? eq.arms.color : skin, 1, rot);
+      drawArmBlood(ctx, armR, hx, hy);
+    };
+
+    // Порядок важен: сначала оружие, затем кулак поверх рукояти —
+    // иначе оружие висело ПОВЕРХ кисти и казалось приклеенным сбоку.
+    let handRot = 0;
+    if (eq.weapon && !bowHand) {
+      const holdAng = weaponHoldAngle(eq.weapon, gear, a.swing);
+      handRot = holdAng - Math.PI * 0.5;
+      drawWeaponInHand(ctx, eq.weapon, 16.4, 49, holdAng, 1, 1);
+    }
+
+    drawFist(handRot);
+    ctx.restore();
+  } else {
+    drawStump(ctx, shoulder * 0.80, hipY - 44, 11, skin, 'side');
   }
 
   // --- Лук в руке: держим за рукоять (обмотку), плечи вертикально ---
@@ -404,7 +991,6 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
     ctx.stroke();
     ctx.restore();
   }
-  ctx.restore();
 
   // --- Голова ---
   ctx.save();
@@ -418,41 +1004,77 @@ function drawBattleBrother(ctx, glad, x, y, scale = 1, facing = 1, anim = {}) {
   const shieldLift = a.block * 0.9;
   if (!armL.lost) {
     ctx.save();
-    ctx.translate(-shoulder * 0.86, hipY - 42);
+    ctx.translate(-shoulder * 0.80, hipY - 44);
     ctx.rotate(-0.15 - shieldLift + armWalkL);
-    limb(ctx, 0, 0, -6, 26, 12, eq.arms ? eq.arms.color : skin);
-    drawArmSchoolDetail(ctx, eq.arms, -3, 13);
-    ctx.fillStyle = eq.arms ? shade(eq.arms.color, 0.1) : skin;
-    ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 3.5;
+    const armW = female ? 10.2 : 12.4;
+    // Ближняя рука — та же единая форма, что и дальняя: плечо, сужение
+    // на локте, предплечье, запястье. Два отрезка с нарисованным поверх
+    // «локтем» давали заметный шов на сгибе.
+    const armPts = [
+      [0.6, -1.0],
+      [-3.2, 8],
+      [-7.6, 17],
+      [-9.4, 22],     // локоть
+      [-11.4, 30],
+      [-13.6, 38],
+      [-15.6, 45],
+      [-16.4, 49]     // кисть
+    ];
+    const armWs = [armW * 1.00, armW * 1.06, armW * 0.88, armW * 0.66,
+      armW * 0.94, armW * 0.78, armW * 0.60, armW * 0.54];
+    limbShape(ctx, armPts, armWs, eq.arms ? eq.arms.color : skin);
+
+    // Складка на сгибе локтя и блики
+    const armColL = eq.arms ? eq.arms.color : skin;
+    ctx.strokeStyle = shadeA(armColL, -0.55, 0.4);
+    ctx.lineWidth = 1.3;
     ctx.beginPath();
-    ctx.arc(-7, 30, 10, 0, Math.PI * 2);
-    ctx.fill(); ctx.stroke();
-    drawArmBlood(ctx, armL, -7, 30);
+    ctx.moveTo(-5.2, 21.4);
+    ctx.quadraticCurveTo(-7.4, 24.2, -10.4, 23.0);
+    ctx.stroke();
+    ctx.strokeStyle = shadeA(armColL, 0.45, 0.2);
+    ctx.lineWidth = armW * 0.3;
+    ctx.beginPath();
+    ctx.moveTo(-2.6, 6);
+    ctx.quadraticCurveTo(-5.2, 12, -7.2, 17);
+    ctx.stroke();
+    ctx.lineWidth = armW * 0.24;
+    ctx.beginPath();
+    ctx.moveTo(-10.6, 29);
+    ctx.quadraticCurveTo(-12.4, 34, -14.2, 39);
+    ctx.stroke();
+
+    drawArmSchoolDetail(ctx, eq.arms, -6, 16);
+    const hx = -16.4, hy = 49;
     // Щит тяжёлый: качается вокруг кисти с запозданием и кренится на ходу.
-    // Если в левой руке второй клинок (димахер) — рисуем оружие, а не щит.
-    if (eq.offhand) {
-      const offIsWeapon = eq.offhand.slot === 'weapon';
-      ctx.save();
-      ctx.translate(-7, 30);
-      if (offIsWeapon) {
-        // Второй клинок развёрнут остриём вперёд, в противофазе правой руке
-        const offCarry = -Math.PI * 0.5;
-        ctx.rotate(offCarry - gear.wpnLag * 0.6 - a.walk * 0.12);
-        ctx.translate(7, -30);
-        ctx.scale(-1, 1);
-        ctx.translate(-14, 0);
-        drawWeapon(ctx, eq.offhand);
-      } else {
+    // Если в левой руке второй клинок (димахер, пара топоров) — рисуем
+    // оружие, а кисть ложится ПОВЕРХ рукояти, как в правой руке.
+    // Парный набор («пара топоров») — это сразу два клинка: второй
+    // рисуется в левой руке, если она не занята щитом или другим клинком.
+    const offWeapon = eq.offhand
+      ? (eq.offhand.slot === 'weapon' ? eq.offhand : null)
+      : (eq.weapon && eq.weapon.dualPair ? eq.weapon : null);
+    if (offWeapon) {
+      // Второй клинок повторяет позу правой руки, но зеркально.
+      const offAng = weaponHoldAngle(offWeapon, gear, a.swing * 0.9);
+      drawWeaponInHand(ctx, offWeapon, hx, hy, offAng, -1, 1);
+      drawHand(ctx, hx, hy, armW, eq.arms ? eq.arms.color : skin, -1, -(offAng - Math.PI * 0.5));
+      drawArmBlood(ctx, armL, hx, hy);
+    } else {
+      drawHand(ctx, hx, hy, armW, eq.arms ? eq.arms.color : skin, -1);
+      drawArmBlood(ctx, armL, hx, hy);
+      if (eq.offhand) {
+        ctx.save();
+        ctx.translate(hx, hy);
         ctx.rotate(shdWalkLag + gear.shdLag + a.walk * 0.06);
-        ctx.translate(7, -30);
-        drawShield(ctx, eq.offhand, -7, 30);
+        ctx.translate(-hx, -hy);
+        drawShield(ctx, eq.offhand, hx, hy);
+        ctx.restore();
       }
-      ctx.restore();
     }
     ctx.restore();
   } else {
-    drawStump(ctx, -shoulder * 0.86, hipY - 42, 12, skin, 'side');
+    drawStump(ctx, -shoulder * 0.80, hipY - 44, 11, skin, 'side');
   }
   ctx.restore();
 
@@ -490,35 +1112,63 @@ function drawLegSegmented(ctx, geom, w, color) {
   const kneeX = midX + 3.4 + lift * 7.5;
   const kneeY = midY + 1 - lift * 2.4;
 
-  // Бедро
-  limb(ctx, hipX, hipY, kneeX, kneeY, w, color);
-  // Голень чуть тоньше
-  limb(ctx, kneeX, kneeY, footX, footY, w * 0.84, color);
+  // Нога — единая форма с профилем: широкое бедро, узкое колено,
+  // икра и тонкая щиколотка. Разница толщин важнее, чем длина:
+  // именно она читается как мышца, а не как палка.
+  const ankleX = kneeX + (footX - kneeX) * 0.90;
+  const ankleY = kneeY + (footY - kneeY) * 0.90;
+  const pts = [
+    [hipX, hipY],
+    [hipX + (kneeX - hipX) * 0.55, hipY + (kneeY - hipY) * 0.55],
+    [kneeX, kneeY],
+    [kneeX + (ankleX - kneeX) * 0.36, kneeY + (ankleY - kneeY) * 0.36],
+    [ankleX, ankleY]
+  ];
+  const ws = [w * 1.46, w * 1.20, w * 0.86, w * 0.90, w * 0.64];
+  limbShape(ctx, pts, ws, color);
 
-  // Колено — небольшой сустав, чтобы сгиб читался
-  ctx.fillStyle = shade(color, -0.12);
-  ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 2.6;
+  // Надколенник
+  const kneeAng = Math.atan2(footY - hipY, footX - hipX);
+  ctx.fillStyle = shade(color, 0.05);
   ctx.beginPath();
-  ctx.arc(kneeX, kneeY, w * 0.34, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke();
+  ctx.ellipse(kneeX, kneeY - w * 0.06, w * 0.36, w * 0.30, kneeAng, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,246,232,0.18)';
+  ctx.beginPath();
+  ctx.ellipse(kneeX - w * 0.10, kneeY - w * 0.16, w * 0.16, w * 0.11, 0, 0, Math.PI * 2);
+  ctx.fill();
 
-  // Стопа
-  ctx.fillStyle = shade(color, -0.2);
-  ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 2.8;
-  roundRect(ctx, footX - w * 0.42, footY - 3, w * 0.42 + 9, 7, 3);
-  ctx.fill(); ctx.stroke();
+  // Стопа: пятка, подъём и пальцы
+  const shinW = w * 0.50;
+  ctx.fillStyle = shade(color, -0.22);
+  ctx.beginPath();
+  ctx.moveTo(footX - shinW * 0.62, footY - 4.4);
+  ctx.quadraticCurveTo(footX + shinW * 0.10, footY - 6.0, footX + shinW * 0.80 + 9, footY - 1.8);
+  ctx.quadraticCurveTo(footX + shinW * 0.80 + 10, footY + 3.2, footX + shinW * 0.66 + 7, footY + 3.8);
+  ctx.quadraticCurveTo(footX - shinW * 0.10, footY + 4.6, footX - shinW * 0.66, footY + 2.8);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = shadeA(color, -0.55, 0.4);
+  ctx.lineWidth = 1;
+  ctx.stroke();
 }
 
-// Броня ног: поножи/обмотки рисуются по фактической геометрии голени
+// Броня ног: поножи/обмотки рисуются по фактической геометрии голени.
+// Каждый стиль имеет свой силуэт: жёсткая створка, обмотки, штанина,
+// шины на ремнях, лаковые пластины.
+const LEG_PLATE_VIS = ['greaves', 'plate', 'gold', 'sandals', 'boots',
+  'platelegs', 'irongreaves', 'goldgreaves', 'imperialgreaves', 'titangreaves',
+  'splintlegs', 'samurai', 'gaiters', 'hidegreaves'];
+const LEG_WRAP_VIS = ['wraps', 'chain', 'scale', 'legwraps', 'puttees', 'baggy',
+  'chainlegs', 'scalelegs'];
+const LEG_SCHOOL_VIS = ['medieval', 'china', 'rus', 'mongol'];
+
 function drawLegArmorNew(ctx, legs, legColor, geoms) {
   if (!legs) return;
   const vis = legs.vis;
-  const plate = ['greaves', 'plate', 'gold', 'sandals', 'boots'].includes(vis);
-  const wrap = ['wraps', 'chain', 'scale'].includes(vis);
-  // Новые школы: у каждой своя фактура на голени
-  const school = ['medieval', 'china', 'rus', 'mongol'].includes(vis);
+  const plate = LEG_PLATE_VIS.includes(vis);
+  const wrap = LEG_WRAP_VIS.includes(vis);
+  const school = LEG_SCHOOL_VIS.includes(vis);
   if (!plate && !wrap && !school) return;
 
   ctx.strokeStyle = OUTLINE;
@@ -597,6 +1247,103 @@ function drawLegArmorNew(ctx, legs, legColor, geoms) {
           roundRect(ctx, len * 0.35, -2, 3.4, 4, 1.4);
           ctx.fill();
         }
+      } else if (vis === 'platelegs' || vis === 'irongreaves' || vis === 'imperialgreaves'
+        || vis === 'titangreaves' || vis === 'greaves') {
+        // Кованая створка: наколенник, фаска и ремень под коленом
+        ctx.fillStyle = 'rgba(255,255,255,0.32)';
+        roundRect(ctx, 1.5, -6.4, len * 0.58, 4.4, 2);
+        ctx.fill();
+        ctx.strokeStyle = shade(legColor, -0.4);
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(2, 2);
+        ctx.lineTo(len - 2, 2);
+        ctx.stroke();
+        ctx.fillStyle = shade(legColor, 0.28);
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(2, -8, 5, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = vis === 'imperialgreaves' || vis === 'titangreaves' ? '#e8c65f' : '#5a3f22';
+        roundRect(ctx, 1, -2.4, len * 0.82, 2.8, 1.3);
+        ctx.fill();
+      } else if (vis === 'goldgreaves') {
+        // Золочёные: насечка-завитки по створке
+        ctx.fillStyle = 'rgba(255,255,255,0.36)';
+        roundRect(ctx, 1.5, -6.4, len * 0.6, 4.2, 2);
+        ctx.fill();
+        ctx.strokeStyle = '#7a5a1a';
+        ctx.lineWidth = 1.2;
+        for (let i = 1; i <= 3; i++) {
+          const x = (len * i) / 4;
+          ctx.beginPath();
+          ctx.moveTo(x, -4);
+          ctx.quadraticCurveTo(x + 3, 0, x, 4);
+          ctx.stroke();
+        }
+      } else if (vis === 'splintlegs') {
+        // Шинные наголенники: кожаная основа и продольные полосы стали
+        ctx.fillStyle = '#6a4a2c';
+        roundRect(ctx, -2, -8, len, 16, 5);
+        ctx.fill(); ctx.stroke();
+        for (let i = -1; i <= 1; i++) {
+          ctx.fillStyle = metalFill(ctx, legColor, -10, 10);
+          ctx.strokeStyle = OUTLINE;
+          ctx.lineWidth = 1.3;
+          roundRect(ctx, 1, i * 4.4 - 1.5, len * 0.86, 3, 1.4);
+          ctx.fill(); ctx.stroke();
+        }
+      } else if (vis === 'samurai') {
+        // Лаковые пластины, шнурованные золотом
+        for (let i = 0; i < 4; i++) {
+          ctx.fillStyle = i % 2 ? shade(legColor, 0.16) : shade(legColor, -0.06);
+          ctx.strokeStyle = OUTLINE;
+          ctx.lineWidth = 1.4;
+          roundRect(ctx, 1 + i * (len * 0.21), -7, len * 0.19, 14, 2.4);
+          ctx.fill(); ctx.stroke();
+        }
+        ctx.strokeStyle = legs.trim || '#c9a45c';
+        ctx.lineWidth = 1.4;
+        for (let i = 0; i < 3; i++) {
+          const x = 1 + len * 0.14 + i * (len * 0.24);
+          ctx.beginPath();
+          ctx.moveTo(x, -7); ctx.lineTo(x + 2, 7);
+          ctx.stroke();
+        }
+      } else if (vis === 'gaiters') {
+        // Кожаные гетры: высокие обхваты с пряжками
+        ctx.fillStyle = shade(legColor, 0.12);
+        roundRect(ctx, -1, -8, len * 0.92, 16, 6);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = legs.trim || '#8a6a3a';
+        for (let i = 0; i < 3; i++) {
+          roundRect(ctx, 1 + i * (len * 0.28), -6, len * 0.2, 3.4, 1.4);
+          ctx.fill();
+          roundRect(ctx, 1 + i * (len * 0.28), 2.6, len * 0.2, 3.4, 1.4);
+          ctx.fill();
+        }
+        ctx.strokeStyle = shade(legColor, -0.4);
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(2, 0); ctx.lineTo(len * 0.9, 0);
+        ctx.stroke();
+      } else if (vis === 'hidegreaves') {
+        // Кожаные поножи: прошивка и завязки
+        ctx.fillStyle = shade(legColor, 0.1);
+        roundRect(ctx, -1, -7.4, len * 0.9, 15, 5);
+        ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = 'rgba(240,232,208,0.6)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([2.6, 2.2]);
+        roundRect(ctx, 1, -5.4, len * 0.8, 10.8, 3);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = shade(legColor, -0.42);
+        for (let i = 0; i < 2; i++) {
+          roundRect(ctx, 2 + i * (len * 0.44), -2, 3.2, 4, 1.2);
+          ctx.fill();
+        }
       } else if (vis === 'plate' || vis === 'gold') {
         ctx.fillStyle = 'rgba(255,255,255,0.3)';
         roundRect(ctx, 1, -6, len * 0.5, 4, 2);
@@ -604,6 +1351,118 @@ function drawLegArmorNew(ctx, legs, legColor, geoms) {
       }
       ctx.restore();
     } else {
+      // Обмотки, штанины, кольчуга и чешуя на голени
+      if (vis === 'baggy') {
+        // Шаровары: свободная штанина с подвязкой у щиколотки
+        ctx.save();
+        ctx.translate(kneeX, kneeY);
+        const ang = Math.atan2(g.footY - kneeY, g.footX - kneeX);
+        ctx.rotate(ang);
+        const len = Math.hypot(g.footX - kneeX, g.footY - kneeY) * 0.86;
+        ctx.fillStyle = shade(legColor, 0.06);
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 2.8;
+        ctx.beginPath();
+        ctx.moveTo(-4, -10);
+        ctx.quadraticCurveTo(len * 0.5, -13, len - 2, -6);
+        ctx.quadraticCurveTo(len + 2, 0, len - 2, 6);
+        ctx.quadraticCurveTo(len * 0.5, 12, -4, 10);
+        ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        // Складки
+        ctx.strokeStyle = shade(legColor, -0.3);
+        ctx.lineWidth = 1.4;
+        for (let i = 1; i <= 3; i++) {
+          const x = (len * i) / 4;
+          ctx.beginPath();
+          ctx.moveTo(x, -8);
+          ctx.quadraticCurveTo(x + 2, 0, x, 8);
+          ctx.stroke();
+        }
+        // Подвязка
+        ctx.fillStyle = shade(legColor, -0.5);
+        roundRect(ctx, len - 5, -6, 4, 12, 1.6);
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
+      if (vis === 'puttees') {
+        // Портянки: плотные витки ткани, узкая лодыжка
+        ctx.save();
+        ctx.translate(kneeX, kneeY);
+        const ang = Math.atan2(g.footY - kneeY, g.footX - kneeX);
+        ctx.rotate(ang);
+        const len = Math.hypot(g.footX - kneeX, g.footY - kneeY) * 0.8;
+        ctx.fillStyle = shade(legColor, -0.04);
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 2.6;
+        roundRect(ctx, -2, -6.5, len, 13, 4.5);
+        ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = shade(legColor, -0.34);
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 5; i++) {
+          const x = 1 + i * (len / 5);
+          ctx.beginPath();
+          ctx.moveTo(x, -6);
+          ctx.lineTo(x + 3, 6);
+          ctx.stroke();
+        }
+        // Оборка у щиколотки
+        ctx.fillStyle = shade(legColor, 0.2);
+        roundRect(ctx, len - 4, -7, 5, 14, 2);
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
+      if (vis === 'chainlegs' || vis === 'chain') {
+        // Кольчужные чулки: кольца по голени
+        ctx.save();
+        ctx.translate(kneeX, kneeY);
+        const ang = Math.atan2(g.footY - kneeY, g.footX - kneeX);
+        ctx.rotate(ang);
+        const len = Math.hypot(g.footX - kneeX, g.footY - kneeY) * 0.78;
+        ctx.fillStyle = shade(legColor, -0.05);
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 2.6;
+        roundRect(ctx, -2, -6.8, len, 13.6, 4.5);
+        ctx.fill(); ctx.stroke();
+        ctx.strokeStyle = shade(legColor, -0.4);
+        ctx.lineWidth = 1.1;
+        for (let row = 0; row < 5; row++) {
+          for (let k = 0; k < 4; k++) {
+            ctx.beginPath();
+            ctx.arc(1 + k * (len / 4) + (row % 2 ? len / 8 : 0), -5 + row * 2.6, 1.8, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+        return;
+      }
+      if (vis === 'scalelegs' || vis === 'scale') {
+        // Чешуя на голени
+        ctx.save();
+        ctx.translate(kneeX, kneeY);
+        const ang = Math.atan2(g.footY - kneeY, g.footX - kneeX);
+        ctx.rotate(ang);
+        const len = Math.hypot(g.footX - kneeX, g.footY - kneeY) * 0.78;
+        ctx.fillStyle = shade(legColor, -0.05);
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 2.6;
+        roundRect(ctx, -2, -6.8, len, 13.6, 4.5);
+        ctx.fill(); ctx.stroke();
+        for (let row = 0; row < 4; row++) {
+          for (let k = 0; k < 4; k++) {
+            ctx.fillStyle = row % 2 ? shade(legColor, 0.14) : legColor;
+            ctx.strokeStyle = shade(legColor, -0.4);
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(1 + k * (len / 4) + (row % 2 ? len / 8 : 0), -4.6 + row * 3, 2.6, 0, Math.PI);
+            ctx.fill(); ctx.stroke();
+          }
+        }
+        ctx.restore();
+        return;
+      }
       ctx.strokeStyle = shade(legColor, -0.25);
       ctx.lineWidth = 2.4;
       for (let i = 1; i <= 3; i++) {
@@ -705,37 +1564,157 @@ function drawHead(ctx, glad, headY, headR, skin, skinDark, female, a, headState)
   const eq = glad.equip || {};
   const hairC = glad.hairColor || '#4a3018';
 
-  ctx.fillStyle = skin;
-  ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 3.5;
-  ctx.beginPath(); ctx.arc(-headR + 3, headY + 4, female ? 6 : 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.arc(headR - 3, headY + 4, female ? 6 : 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  // Черты лица нарисованы в эталонной сетке REF. Масштаб приводит их
+  // к текущему радиусу головы, поэтому пропорции можно менять в одном
+  // месте, не пересчитывая каждую бровь и ресницу.
+  const REF = 26.5;
+  const origHeadR = headR;
+  const headScale = headR / REF;
+  ctx.save();
+  ctx.translate(0, headY);
+  ctx.scale(headScale, headScale);
+  ctx.translate(0, -headY);
+  headR = REF;
+
+  // Контур головы тонкий: жирная обводка и была главным источником
+  // «мультяшности». Тень делается заливкой, а не линией.
+  const SKIN_EDGE = shade(skin, -0.62);
+
+  // Форма лица из FACE_STYLES: набор коэффициентов, а не отдельная
+  // геометрия на каждый вариант. Все восемь типов строятся одними
+  // кривыми, поэтому лицо не «ломается» при смене пола и телосложения.
+  const FS = (typeof faceStyleOf === 'function') ? faceStyleOf(glad) : null;
+  // Коэффициенты из FACE_STYLES отклоняются от 1 не больше чем на 25%.
+  // На маленькой голове в бою такой разницы почти не видно, поэтому
+  // отклонение усиливается: форма должна читаться с первого взгляда,
+  // но без гротеска. 2.2 — предел, после которого лица становятся
+  // карикатурными.
+  const amp = (v) => 1 + (v - 1) * 2.2;
+  const fJaw = FS ? amp(FS.jaw) : 1;
+  const fChin = FS ? amp(FS.chin) : 1;
+  const fCheek = FS ? amp(FS.cheek) : 1;
+  const fGap = FS ? amp(FS.eyeGap) : 1;
+  const fEye = FS ? FS.eyeSize : 1;
+  const fNose = FS ? amp(FS.nose) : 1;
+  const fLip = FS ? amp(FS.lip) : 1;
+  const fBrow = FS ? amp(FS.brow) : 1;
+
+  // Череп: широкий свод, скулы, сужение к подбородку. Простая окружность
+  // читается как мяч, поэтому силуэт строим кривыми.
+  // Для лаконичного мультяшного стиля голова круглее, чем у человека:
+  // отношение ширины к высоте около 0.93 вместо реалистичных 0.75.
+  const HW = headR * 0.93 * (0.62 + 0.38 * fCheek);
+  const headPath = () => {
+    ctx.beginPath();
+    ctx.moveTo(0, headY - headR * 1.07);
+    ctx.bezierCurveTo(HW * 0.62, headY - headR * 1.06, HW * 1.02, headY - headR * 0.52, HW * 0.99, headY - headR * 0.02);
+    // Скула: выраженность задаётся cheek
+    ctx.bezierCurveTo(HW * 0.96 * fCheek, headY + headR * 0.44, HW * 0.66 * fJaw, headY + headR * 0.92,
+      HW * 0.30 * fJaw, headY + headR * (1.04 * fChin));
+    ctx.bezierCurveTo(HW * 0.10 * fJaw, headY + headR * (1.10 * fChin), -HW * 0.10 * fJaw, headY + headR * (1.10 * fChin),
+      -HW * 0.30 * fJaw, headY + headR * (1.04 * fChin));
+    ctx.bezierCurveTo(-HW * 0.66 * fJaw, headY + headR * 0.92, -HW * 0.96 * fCheek, headY + headR * 0.44, -HW * 0.99, headY - headR * 0.02);
+    ctx.bezierCurveTo(-HW * 1.02, headY - headR * 0.52, -HW * 0.62, headY - headR * 1.06, 0, headY - headR * 1.07);
+    ctx.closePath();
+  };
+
+  // Ухо: раковина с завитком и мочкой, а не кружок с обводкой.
+  const drawEar = (side) => {
+    ctx.save();
+    ctx.scale(side, 1);
+    const ex = HW * 0.99;
+    ctx.beginPath();
+    ctx.moveTo(ex - 1, headY - 3.4);
+    ctx.quadraticCurveTo(ex + 4.6, headY - 5.6, ex + 4.8, headY + 1.6);
+    ctx.quadraticCurveTo(ex + 4.9, headY + 8.4, ex + 0.6, headY + 10.4);
+    ctx.quadraticCurveTo(ex - 2.4, headY + 9.2, ex - 1.6, headY + 4.2);
+    ctx.closePath();
+    ctx.fillStyle = shade(skin, -0.06);
+    ctx.fill();
+    // Ухо обводим тем же контуром, что и голову: иначе оно читается
+    // как отдельная наклейка на лице.
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.0 / Math.max(0.5, headScale);
+    ctx.stroke();
+    // Завиток
+    ctx.beginPath();
+    ctx.moveTo(ex + 1.8, headY - 1.6);
+    ctx.quadraticCurveTo(ex + 3.4, headY + 2.6, ex + 1.2, headY + 6.4);
+    ctx.stroke();
+    // Мочка
+    ctx.fillStyle = shade(skin, -0.2);
+    ctx.beginPath();
+    ctx.ellipse(ex + 1.4, headY + 8.4, 1.9, 1.4, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+  drawEar(-1);
+  drawEar(1);
 
   if (female && !eq.head) {
-    ctx.fillStyle = '#e5b54f';
-    ctx.beginPath(); ctx.arc(headR - 3, headY + 13, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#d9a63f';
+    ctx.beginPath(); ctx.arc(HW * 1.03, headY + 10.2, 2.1, 0, Math.PI * 2); ctx.fill();
   }
 
-  ctx.beginPath();
-  ctx.ellipse(0, headY, headR, headR * 1.05, 0, 0, Math.PI * 2);
+  headPath();
   ctx.fillStyle = skin;
   ctx.fill();
+  // Контур головы — такой же толщины, как у тела: единый стиль рисунка.
+  // Голова рисуется в эталонной сетке (масштаб headScale), поэтому
+  // толщину делим на этот масштаб — иначе на крупной голове контур
+  // выглядел бы тоньше, чем на корпусе.
   ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 3.0 / Math.max(0.5, headScale);
   ctx.stroke();
 
+  // Объём лица: тень по краю черепа, под скулой и у челюсти.
   ctx.save();
-  ctx.beginPath();
-  ctx.ellipse(0, headY, headR, headR * 1.05, 0, 0, Math.PI * 2);
+  headPath();
   ctx.clip();
-  ctx.fillStyle = skinDark;
+
+  // Боковая тень (свет падает слева-сверху)
+  const sideShade = ctx.createLinearGradient(-headR, headY - headR, headR * 0.5, headY + headR * 0.6);
+  sideShade.addColorStop(0, 'rgba(255,240,225,0.16)');
+  sideShade.addColorStop(0.42, 'rgba(255,255,255,0)');
+  sideShade.addColorStop(1, 'rgba(58,30,16,0.30)');
+  ctx.fillStyle = sideShade;
+  ctx.fillRect(-headR - 2, headY - headR * 1.2, headR * 2 + 4, headR * 2.4);
+
+  // Впадина под скулой: глубина связана с выраженностью скул — на
+  // худом лице она резкая, на круглом почти незаметна. Тень вытянутая
+  // и слабая: плотное круглое пятно читалось как румяна.
+  ctx.fillStyle = `rgba(96,52,30,${0.05 + 0.055 * fCheek})`;
   ctx.beginPath();
-  ctx.ellipse(-headR * 0.72, headY + 7, headR * 0.46, headR * 0.82, 0.2, 0, Math.PI * 2);
+  ctx.ellipse(-headR * 0.52 * fJaw, headY + headR * 0.42, headR * 0.30, headR * 0.30 * fCheek, -0.42, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(headR * 0.54 * fJaw, headY + headR * 0.42, headR * 0.30, headR * 0.30 * fCheek, 0.42, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Тень под нижней губой и на подбородке
+  ctx.fillStyle = 'rgba(96,52,30,0.16)';
+  ctx.beginPath();
+  ctx.ellipse(0, headY + headR * 0.80 * fChin, headR * 0.30, headR * 0.14, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Блик на лбу и скуле
+  ctx.fillStyle = 'rgba(255,246,232,0.20)';
+  ctx.beginPath();
+  ctx.ellipse(-headR * 0.20, headY - headR * 0.58, headR * 0.30, headR * 0.17, -0.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(-headR * 0.52, headY + headR * 0.06, headR * 0.15, headR * 0.10, -0.4, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
   // Глухие шлемы полностью закрывают лицо. Венец и капюшон — нет.
   const hidden = eq.head && ['murmillo', 'greathelm', 'horned'].includes(eq.head.vis);
+
+  // Борода и волосы рисуются ДО черт лица: рот, брови, глаза и кровь
+  // остаются поверх, поэтому выражение читается в любой бороде и чёлке.
+  const beard = female ? 'none' : (glad.beardStyle || 'none');
+  if (beard !== 'none' && !hidden) drawBeard(ctx, beard, headY, headR, hairC, skin);
+  if (!eq.head && !hidden) drawHair(ctx, glad, headY, headR, hairC);
 
   if (!hidden) {
     const t = performance.now() / 1000;
@@ -754,167 +1733,435 @@ function drawHead(ctx, glad, headY, headR, skin, skinDark, female, a, headState)
     const gazeY = Math.cos(t * 0.55 + seed * 5) * 1.0;
     const browBob = Math.sin(t * 1.6 + seed * 3) * 0.5;
 
-    const eyeW = emo === 'fear' ? 9.3 : emo === 'angry' ? 8.4 : emo === 'happy' ? 7.6 : 8;
-    const eyeH = emo === 'fear' ? 10.6 : emo === 'angry' ? 6.4
-      : emo === 'hurt' ? 6.8 : emo === 'happy' ? 6.4 : 8.6;
-    const eyeY = headY - 2 + (emo === 'fear' ? -1.2 : emo === 'angry' ? 0.8 : 0);
+    // Наборы черт: форма лица задаёт череп, а эти коэффициенты — то,
+    // что делает лица разными при одинаковом овале.
+    const ES = (typeof eyeSetOf === 'function') ? eyeSetOf(glad) : null;
+    const NS = (typeof noseSetOf === 'function') ? noseSetOf(glad) : null;
+    const BS = (typeof browSetOf === 'function') ? browSetOf(glad) : null;
+    const eOpen = ES ? ES.open : 1;
+    const eTilt = ES ? ES.tilt : 0;
+    const eRound = ES ? ES.round : 0.35;
+    const eLid = ES ? ES.lid : 0.25;
+    const ePupil = ES ? ES.pupil : 1;
 
-    ctx.fillStyle = '#fffdf6';
-    ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 2.5;
-    ctx.beginPath(); ctx.ellipse(-10, eyeY, eyeW, eyeH * blink, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(9, eyeY, eyeW, eyeH * blink, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    const eyeW = (emo === 'fear' ? 5.2 : emo === 'angry' ? 4.7 : emo === 'happy' ? 4.3 : 4.6) * fEye;
+    const eyeH = (emo === 'fear' ? 5.0 : emo === 'angry' ? 3.0
+      : emo === 'hurt' ? 3.2 : emo === 'happy' ? 2.8 : 3.6) * fEye * eOpen;
+    const eyeY = headY - 2.4 + (emo === 'fear' ? -0.8 : emo === 'angry' ? 0.6 : 0);
+    // Расстояние между зрачками: широко расставленные глаза делают лицо
+    // открытым, близко посаженные — настороженным.
+    const eyeDX = 8.4 * fGap;
 
-    if (blink > 0.5) {
-      const pr = emo === 'fear' ? 2.6 : emo === 'angry' ? 3.9 : 3.6;
-      const py = eyeY - 1 + (emo === 'angry' ? 1.1 : emo === 'fear' ? -1.1 : 0);
-      ctx.fillStyle = '#20180f';
-      ctx.beginPath(); ctx.arc(-8 + gazeX, py + gazeY, pr, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(11 + gazeX, py + gazeY, pr, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      ctx.beginPath(); ctx.arc(-9.4 + gazeX, py - 1.6 + gazeY, 1.2, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(9.6 + gazeX, py - 1.6 + gazeY, 1.2, 0, Math.PI * 2); ctx.fill();
-    }
+    // Глаз: разрез строится вокруг центра cx/eyeY. Форма задаётся набором:
+    // tilt поднимает внешний угол, round делает разрез округлым,
+    // lid опускает верхнее веко. Размер по вертикали намеренно меньше
+    // горизонтального — человеческий глаз вытянут, а не круглый.
+    const drawEye = (cx) => {
+      const eh = Math.max(1.0, eyeH * blink);
+      const side = cx < 0 ? -1 : 1;
+      const outX = cx + side * eyeW;
+      const inX = cx - side * eyeW;
+      // Все точки разреза считаем вдоль оси «внутренний угол → внешний»,
+      // поэтому левый глаз строится ровно так же, как правый, только
+      // зеркально. Раньше контрольные точки задавались абсолютными
+      // смещениями влево-вправо, и левый глаз выходил перекошенным.
+      const ax = (k) => inX + (outX - inX) * k;
+      // Наклон: внешний угол выше, внутренний ниже.
+      const tiltUp = eTilt * 1.8;
+      const outerY = eyeY - tiltUp;
+      const innerY = eyeY + tiltUp * 0.7;
+      // Верхняя дуга: округлость поднимает её, тяжёлое веко опускает.
+      const up = eh * (0.78 + eRound * 0.34) * (1 - eLid * 0.55);
+      const low = eh * 0.48;
+
+      const upperPath = () => {
+        ctx.moveTo(inX, innerY);
+        ctx.quadraticCurveTo(ax(0.34), eyeY - up, ax(0.56), eyeY - up * 0.80);
+        ctx.quadraticCurveTo(ax(0.82), eyeY - up * 0.55, outX, outerY);
+      };
+
+      ctx.beginPath();
+      upperPath();
+      // Нижнее веко: мягкая дуга обратно к внутреннему углу
+      ctx.quadraticCurveTo(ax(0.68), eyeY + low, ax(0.50), eyeY + low * 0.82);
+      ctx.quadraticCurveTo(ax(0.20), eyeY + low * 0.34, inX, innerY);
+      ctx.closePath();
+      ctx.fillStyle = '#efe6d8';
+      ctx.fill();
+      // Тень от верхнего века внутри белка
+      ctx.save();
+      ctx.clip();
+      const lidShade = ctx.createLinearGradient(0, eyeY - up, 0, eyeY + low);
+      lidShade.addColorStop(0, `rgba(40,22,12,${0.30 + eLid * 0.30})`);
+      lidShade.addColorStop(0.55, 'rgba(40,22,12,0.02)');
+      lidShade.addColorStop(1, 'rgba(40,22,12,0.10)');
+      ctx.fillStyle = lidShade;
+      ctx.fillRect(cx - eyeW - 1, eyeY - up - 2, eyeW * 2 + 2, up + low + 4);
+      ctx.restore();
+
+      if (blink > 0.5) {
+        // Радужка занимает меньше половины разреза — иначе глаз читается
+        // как чёрное пятно, а не как глаз.
+        const pr = (emo === 'fear' ? 1.7 : emo === 'angry' ? 1.9 : 1.85) * ePupil;
+        // Зрачок держим в центре разреза: он не должен уезжать к веку.
+        const py = eyeY + (emo === 'angry' ? 0.35 : emo === 'fear' ? -0.35 : 0.0);
+        const px = cx + (cx < 0 ? 0.35 : -0.35) + gazeX * 0.35;
+        // Радужка: не чёрный кружок, а тёмный ореол вокруг зрачка
+        ctx.fillStyle = '#4a3320';
+        ctx.beginPath(); ctx.arc(px, py + gazeY * 0.35, pr, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#15100a';
+        ctx.beginPath(); ctx.arc(px, py + gazeY * 0.35, pr * 0.56, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.beginPath(); ctx.arc(px - pr * 0.36, py - pr * 0.42 + gazeY * 0.35, pr * 0.22, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // Верхнее веко — та же дуга, что и белок: контур не расходится
+      // с формой глаза, поэтому нет двойной линии.
+      ctx.strokeStyle = '#33210f';
+      ctx.lineWidth = (female ? 1.4 : 1.6) + eLid * 0.7;
+      ctx.beginPath();
+      upperPath();
+      ctx.stroke();
+      // Нижнее веко светлее и тоньше
+      ctx.strokeStyle = 'rgba(90,52,32,0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(ax(0.16), innerY + low * 0.34);
+      ctx.quadraticCurveTo(ax(0.50), eyeY + low * 0.90, ax(0.86), outerY + 0.5);
+      ctx.stroke();
+      // Мешок/складка под глазом: у тяжёлых век выражен сильнее
+      ctx.strokeStyle = `rgba(120,70,42,${0.16 + eLid * 0.26})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(ax(0.14), eyeY + low + 1.6);
+      ctx.quadraticCurveTo(ax(0.55), eyeY + low + 2.2, ax(0.94), eyeY + 1.8);
+      ctx.stroke();
+    };
+
+    drawEye(-eyeDX);
+    drawEye(eyeDX);
 
     // Крестики вместо глаз у павшего
     if (emo === 'dead') {
       ctx.strokeStyle = OUTLINE;
-      ctx.lineWidth = 2.4;
-      [-10, 9].forEach(cx => {
+      ctx.lineWidth = 2.0;
+      [-eyeDX, eyeDX].forEach(cx => {
         ctx.beginPath();
-        ctx.moveTo(cx - 5, eyeY - 5); ctx.lineTo(cx + 5, eyeY + 5);
-        ctx.moveTo(cx + 5, eyeY - 5); ctx.lineTo(cx - 5, eyeY + 5);
+        ctx.moveTo(cx - 4, eyeY - 4); ctx.lineTo(cx + 4, eyeY + 4);
+        ctx.moveTo(cx + 4, eyeY - 4); ctx.lineTo(cx - 4, eyeY + 4);
         ctx.stroke();
       });
     }
 
     if (female) {
-      ctx.strokeStyle = OUTLINE;
-      ctx.lineWidth = 2.2;
+      ctx.strokeStyle = '#33210f';
+      ctx.lineWidth = 1.3;
       ctx.beginPath();
-      ctx.moveTo(-18, headY - 8); ctx.lineTo(-21, headY - 12);
-      ctx.moveTo(-13, headY - 10); ctx.lineTo(-14, headY - 15);
-      ctx.moveTo(17, headY - 8); ctx.lineTo(20, headY - 12);
-      ctx.moveTo(12, headY - 10); ctx.lineTo(13, headY - 15);
+      ctx.moveTo(-eyeDX - eyeW, eyeY - 1);
+      ctx.lineTo(-eyeDX - eyeW - 2.6, eyeY - 3.6);
+      ctx.moveTo(eyeDX + eyeW, eyeY - 1);
+      ctx.lineTo(eyeDX + eyeW + 2.6, eyeY - 3.6);
       ctx.stroke();
     }
 
-    // Брови: наклон и высота передают эмоцию
-    const browL = { x1: -19, y1: headY - 13, x2: -3, y2: headY - 8 };
-    const browR = { x1: 18, y1: headY - 13, x2: 3, y2: headY - 8 };
+    // Брови: толще у переносицы, тоньше к виску — как растут волосы.
+    // Набор BROW_SETS задаёт посадку: gap — от переносицы, inner —
+    // поднятость внутреннего края, outer — опущенность внешнего,
+    // arch — высота дуги. Эмоция меняет уже готовую форму.
+    const bGap = BS ? BS.gap : 1;
+    const bInner = BS ? BS.inner : 0;
+    const bOuter = BS ? BS.outer : 0;
+    const bArch = BS ? BS.arch : 0.4;
+    const browIn = 2.6 * fGap * bGap;
+    const browOut = 16.5 * fGap * bGap;
+    const bInnerY = headY - 6.6 - bInner * 4.2;
+    const bOuterY = headY - 10.5 - bOuter * 4.2;
+    const browL = { x1: -browOut, y1: bOuterY, x2: -browIn, y2: bInnerY };
+    const browR = { x1: browOut, y1: bOuterY, x2: browIn, y2: bInnerY };
     if (emo === 'angry') {
-      browL.y1 = headY - 15; browL.y2 = headY - 5;
-      browR.y1 = headY - 15; browR.y2 = headY - 5;
+      browL.y1 = headY - 12.2; browL.y2 = headY - 4.2;
+      browR.y1 = headY - 12.2; browR.y2 = headY - 4.2;
     } else if (emo === 'fear') {
-      browL.y1 = headY - 8; browL.y2 = headY - 16;
-      browR.y1 = headY - 8; browR.y2 = headY - 16;
+      browL.y1 = headY - 6.6; browL.y2 = headY - 12.6;
+      browR.y1 = headY - 6.6; browR.y2 = headY - 12.6;
     } else if (emo === 'hurt') {
-      browL.y1 = headY - 16; browL.y2 = headY - 9;
-      browR.y1 = headY - 11; browR.y2 = headY - 7;
+      browL.y1 = headY - 12.8; browL.y2 = headY - 7.2;
+      browR.y1 = headY - 9.0; browR.y2 = headY - 5.6;
     } else if (emo === 'happy') {
-      browL.y1 = headY - 16; browL.y2 = headY - 13;
-      browR.y1 = headY - 16; browR.y2 = headY - 13;
+      browL.y1 = headY - 12.6; browL.y2 = headY - 10.2;
+      browR.y1 = headY - 12.6; browR.y2 = headY - 10.2;
     }
-    ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = female ? 3.2 : 4.2;
-    ctx.beginPath();
-    ctx.moveTo(browL.x1, browL.y1 + browBob); ctx.lineTo(browL.x2, browL.y2 + browBob);
-    ctx.moveTo(browR.x1, browR.y1 + browBob); ctx.lineTo(browR.x2, browR.y2 + browBob);
-    ctx.stroke();
+    const browColor = shade(hairC, -0.12);
+    const drawBrow = (b, innerFirst) => {
+      const x0 = innerFirst ? b.x2 : b.x1;
+      const y0 = (innerFirst ? b.y2 : b.y1) + browBob;
+      const x1 = innerFirst ? b.x1 : b.x2;
+      const y1 = (innerFirst ? b.y1 : b.y2) + browBob;
+      // Высота дуги: у прямой брови контрольная точка почти на линии,
+      // у крутой — заметно выше.
+      const archY = Math.min(y0, y1) - 0.6 - bArch * 3.4;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.quadraticCurveTo((x0 + x1) / 2, archY, x1, y1);
+      ctx.strokeStyle = browColor;
+      ctx.lineWidth = (female ? 1.9 : 2.6) * fBrow * (BS ? BS.thick : 1);
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      // Отдельные волоски у внешнего края
+      ctx.strokeStyle = shade(hairC, -0.34);
+      ctx.lineWidth = 0.9;
+      for (let i = 0; i < 3; i++) {
+        const t = 0.62 + i * 0.13;
+        const px = x0 + (x1 - x0) * t;
+        const py = y0 + (y1 - y0) * t - 0.8;
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.lineTo(px + (x1 > x0 ? 1.5 : -1.5), py - 1.5);
+        ctx.stroke();
+      }
+    };
+    drawBrow(browL, false);
+    drawBrow(browR, true);
+    // Сросшиеся брови: перемычка над переносицей
+    if (BS && BS.unibrow) {
+      ctx.strokeStyle = browColor;
+      ctx.lineWidth = (female ? 1.9 : 2.6) * fBrow * BS.thick * 0.8;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(browL.x2, browL.y2 + browBob);
+      ctx.lineTo(browR.x2, browR.y2 + browBob);
+      ctx.stroke();
+    }
 
-    // Нос
-    ctx.strokeStyle = shade(skin, -0.35);
-    ctx.lineWidth = 3;
+    // Нос: спинка, крылья и тень под кончиком. Раньше была одна дуга.
+    // Длина, ширина крыльев, горбинка и посадка кончика берутся из
+    // NOSE_SETS: крючковатый нос на узком лице и курносый на широком —
+    // это разные люди даже при одинаковом овале.
+    const nLen = NS ? NS.len : 1;
+    const nWidth = NS ? NS.width : 1;
+    const nBridge = NS ? NS.bridge : 1;
+    const nHook = NS ? NS.hook : 0.1;
+    const nTip = NS ? NS.tip : 0;
+    const nFlare = NS ? NS.flare : 1;
+    const noseY0 = headY - 3.2;
+    const noseY1 = headY + (6.2 * fNose) * nLen;
+    const noseSpan = noseY1 - noseY0;
+    // Горбинка: контрольная точка спинки выносится вбок от оси
+    const hookX = -1.0 - nHook * 2.2;
+    ctx.strokeStyle = 'rgba(112,64,38,0.55)';
+    ctx.lineWidth = 1.4 * (0.9 + nBridge * 0.2);
     ctx.beginPath();
-    ctx.moveTo(-1, headY + 2);
-    ctx.quadraticCurveTo(-3, headY + 9, 2, headY + 10);
+    ctx.moveTo(0.6 * nBridge, noseY0);
+    ctx.quadraticCurveTo(hookX, noseY0 + noseSpan * 0.5, -1.6 * nBridge, noseY1);
     ctx.stroke();
+    // Тень от спинки носа
+    ctx.strokeStyle = 'rgba(255,244,230,0.28)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(-0.8 * nBridge, noseY0 + 0.6);
+    ctx.quadraticCurveTo(hookX - 1.2, noseY0 + noseSpan * 0.5, -2.8 * nBridge, noseY1 - 0.4);
+    ctx.stroke();
+    // Кончик: опущенный или вздёрнутый
+    const tipY = noseY1 + nTip * 1.8;
+    ctx.fillStyle = shade(skin, -0.10 - nHook * 0.06);
+    ctx.beginPath();
+    ctx.ellipse(0, tipY - 0.4, 1.9 * nWidth, 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Крылья
+    ctx.fillStyle = shade(skin, -0.16);
+    ctx.beginPath();
+    ctx.ellipse(-3.2 * nWidth, tipY + 0.4, 1.9 * nFlare, 1.5, 0.35, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(3.2 * nWidth, tipY + 0.4, 1.9 * nFlare, 1.5, -0.35, 0, Math.PI * 2);
+    ctx.fill();
+    // Ноздри
+    ctx.fillStyle = 'rgba(70,38,22,0.55)';
+    ctx.beginPath();
+    ctx.ellipse(-2.7 * nWidth, tipY + 0.8, 0.85 * nFlare, 0.6, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(2.7 * nWidth, tipY + 0.8, 0.85 * nFlare, 0.6, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // Тень под носом
+    ctx.fillStyle = 'rgba(96,52,30,0.20)';
+    ctx.beginPath();
+    ctx.ellipse(0, tipY + 2.6, 3.6 * nWidth, 1.2, 0, 0, Math.PI * 2);
+    ctx.fill();
 
-    // Рот — главный индикатор эмоции
-    ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 2.8;
+    // Рот — главный индикатор эмоции. Губы рисуем двумя линиями:
+    // верхняя тоньше и темнее, нижняя светлее с бликом. Никаких
+    // жирных обводок — они превращали лицо в маску.
+    // Ширина губ масштабируется коэффициентом lip: узкий рот на широком
+    // лице и крупный на маленьком — это разные люди с первого взгляда.
+    const mouthY = headY + 13.6;
+    const lipDark = 'rgba(104,48,40,0.85)';
+    const lipLight = 'rgba(176,96,84,0.55)';
+    // Набор рта: ширина, полнота губ, опущенные уголки, перекос.
+    // Он работает поверх формы лица, поэтому «широкий рот» и «тонкие
+    // губы» — это два разных человека, а не одно и то же лицо.
+    const MS = (typeof mouthSetOf === 'function') ? mouthSetOf(glad) : null;
+    const mWidth = MS ? MS.width : 1;
+    const mFull = MS ? MS.full : 0.55;
+    const mCorner = MS ? MS.corner : 0;
+    const mTilt = MS ? MS.tilt : 0;
+    const mPhil = MS ? MS.philtrum : 1;
+    ctx.save();
+    // Масштаб по ширине: форма лица даёт общую ширину, набор рта — свою.
+    const mouthScaleX = fLip * mWidth;
+    if (mouthScaleX !== 1 || mTilt) {
+      ctx.translate(0, mouthY);
+      ctx.scale(mouthScaleX, 1);
+      if (mTilt) ctx.rotate(mTilt * 0.10);
+      ctx.translate(0, -mouthY);
+    }
+    // Желобок над верхней губой — глубина зависит от набора
+    ctx.strokeStyle = `rgba(120,66,42,${0.16 + 0.10 * mPhil})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, mouthY - 3.6);
+    ctx.lineTo(0, mouthY - 1.4);
+    ctx.stroke();
     if (emo === 'dead') {
       ctx.beginPath();
-      ctx.ellipse(0, headY + 17, 6, 4, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, mouthY + 1.4, 4.6, 3.0, 0, 0, Math.PI * 2);
       ctx.fillStyle = '#3a1210';
-      ctx.fill(); ctx.stroke();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,14,10,0.7)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
     } else if (emo === 'hurt' || a.hurt > 0.3) {
       // Крик от боли: рот открыт, зубы видны
-      const open = 4 + Math.sin(t * 14) * 1.4;
+      const open = 3.2 + Math.sin(t * 14) * 1.1;
       ctx.beginPath();
-      ctx.ellipse(0, headY + 16, 7.5, open, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, mouthY + 1.2, 5.6, open, 0, 0, Math.PI * 2);
       ctx.fillStyle = '#5a1a14';
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#f4efe2';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,14,10,0.65)';
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+      // Верхние зубы
+      ctx.fillStyle = '#efe8da';
       ctx.beginPath();
-      ctx.rect(-5.4, headY + 16 - open, 10.8, 2.2);
+      ctx.rect(-3.9, mouthY + 1.2 - open, 7.8, 1.7);
+      ctx.fill();
+      // Язык в глубине
+      ctx.fillStyle = 'rgba(150,60,58,0.55)';
+      ctx.beginPath();
+      ctx.ellipse(0, mouthY + 1.2 + open * 0.45, 3.0, 1.5, 0, 0, Math.PI * 2);
       ctx.fill();
     } else if (emo === 'angry') {
-      // Рык: широко открытый рот, пульсирует
-      const open = 5 + Math.sin(t * 9 + seed * 4) * 2;
+      // Рык: рот приоткрыт, пульсирует
+      const open = 3.6 + Math.sin(t * 9 + seed * 4) * 1.5;
       ctx.beginPath();
-      ctx.ellipse(0, headY + 16.5, 8.5, open, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, mouthY + 1.4, 6.2, open, 0, 0, Math.PI * 2);
       ctx.fillStyle = '#4a1410';
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#f4efe2';
-      ctx.beginPath();
-      ctx.rect(-6.2, headY + 16.5 - open, 12.4, 2.4);
       ctx.fill();
-      // Злая жилка на виске
-      ctx.strokeStyle = 'rgba(190,60,50,0.85)';
-      ctx.lineWidth = 1.8;
-      const vx = 15, vy = headY - 20;
+      ctx.strokeStyle = 'rgba(30,14,10,0.65)';
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
+      ctx.fillStyle = '#efe8da';
       ctx.beginPath();
-      ctx.moveTo(vx, vy - 4); ctx.lineTo(vx + 3, vy); ctx.lineTo(vx - 2, vy);
-      ctx.lineTo(vx + 2, vy + 4);
+      ctx.rect(-4.4, mouthY + 1.4 - open, 8.8, 1.8);
+      ctx.fill();
+      // Напряжённые складки у рта
+      ctx.strokeStyle = 'rgba(110,60,36,0.4)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-6.4, mouthY - 1.6);
+      ctx.quadraticCurveTo(-7.6, mouthY + 2.6, -6.2, mouthY + 5.4);
+      ctx.moveTo(6.4, mouthY - 1.6);
+      ctx.quadraticCurveTo(7.6, mouthY + 2.6, 6.2, mouthY + 5.4);
       ctx.stroke();
     } else if (emo === 'fear') {
-      // Испуг: маленький круглый рот + капля пота
+      // Испуг: приоткрытый рот + капля пота
       ctx.beginPath();
-      ctx.ellipse(0, headY + 17, 4, 4.6 + Math.sin(t * 6) * 0.8, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, mouthY + 1.6, 2.9, 3.4 + Math.sin(t * 6) * 0.7, 0, 0, Math.PI * 2);
       ctx.fillStyle = '#4a1410';
-      ctx.fill(); ctx.stroke();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,14,10,0.6)';
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
       const dropT = (t * 0.9 + seed) % 1;
-      ctx.fillStyle = `rgba(150,200,235,${0.85 - dropT * 0.6})`;
+      ctx.fillStyle = `rgba(150,200,235,${0.75 - dropT * 0.55})`;
       ctx.beginPath();
-      ctx.ellipse(headR - 2, headY - 12 + dropT * 16, 2.4, 3.4, 0, 0, Math.PI * 2);
+      ctx.ellipse(headR * 0.82, headY - headR * 0.42 + dropT * 15, 1.9, 2.7, 0, 0, Math.PI * 2);
       ctx.fill();
     } else if (emo === 'happy') {
-      // Широкая улыбка, приподнятые уголки
+      // Улыбка: уголки вверх, нижняя губа чуть видна
       ctx.beginPath();
-      ctx.moveTo(-9, headY + 14);
-      ctx.quadraticCurveTo(0, headY + 24, 9, headY + 14);
+      ctx.moveTo(-6.4, mouthY - 0.4);
+      ctx.quadraticCurveTo(0, mouthY + 4.4, 6.4, mouthY - 0.4);
+      ctx.strokeStyle = lipDark;
+      ctx.lineWidth = 1.6;
       ctx.stroke();
-      ctx.fillStyle = '#b8564a';
       ctx.beginPath();
-      ctx.moveTo(-7, headY + 15.5);
-      ctx.quadraticCurveTo(0, headY + 21, 7, headY + 15.5);
-      ctx.quadraticCurveTo(0, headY + 18.5, -7, headY + 15.5);
-      ctx.fill();
+      ctx.moveTo(-4.6, mouthY + 1.4);
+      ctx.quadraticCurveTo(0, mouthY + 4.0, 4.6, mouthY + 1.4);
+      ctx.strokeStyle = lipLight;
+      ctx.lineWidth = 1.3;
+      ctx.stroke();
     } else if (emo === 'taunt') {
       // Ухмылка набок
       ctx.beginPath();
-      ctx.moveTo(-7, headY + 15);
-      ctx.quadraticCurveTo(1, headY + 21, 10, headY + 13);
+      ctx.moveTo(-5.6, mouthY);
+      ctx.quadraticCurveTo(1, mouthY + 4.2, 7.4, mouthY - 1.4);
+      ctx.strokeStyle = lipDark;
+      ctx.lineWidth = 1.7;
       ctx.stroke();
     } else if (female) {
-      ctx.fillStyle = '#b8564a';
+      // Полные губы: верхняя с «луком», нижняя с бликом.
+      // Полнота берётся из набора рта, поэтому «тонкие губы» у женщины
+      // не превращаются в мужской рот.
+      const fw = 5.4 + 1.4 * mFull;
+      const fb = 2.0 + 1.6 * mFull;
       ctx.beginPath();
-      ctx.moveTo(-7, headY + 16);
-      ctx.quadraticCurveTo(0, headY + 21, 7, headY + 16);
-      ctx.quadraticCurveTo(0, headY + 19, -7, headY + 16);
+      ctx.moveTo(-fw, mouthY + mCorner * 1.6);
+      ctx.quadraticCurveTo(-fw * 0.48, mouthY - 1.4 * mFull - 0.6, -1.2, mouthY - 0.6);
+      ctx.quadraticCurveTo(0, mouthY - 1.9 * mFull - 0.3, 1.2, mouthY - 0.6);
+      ctx.quadraticCurveTo(fw * 0.48, mouthY - 1.4 * mFull - 0.6, fw, mouthY + mCorner * 1.6);
+      ctx.quadraticCurveTo(0, mouthY + fb + 1.4, -fw, mouthY + mCorner * 1.6);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(168,74,66,0.72)';
       ctx.fill();
-    } else {
       ctx.beginPath();
-      ctx.moveTo(-8, headY + 16);
-      ctx.quadraticCurveTo(0, headY + 21, 8, headY + 15);
+      ctx.moveTo(-fw * 0.8, mouthY + 1.2);
+      ctx.quadraticCurveTo(0, mouthY + fb + 1.0, fw * 0.8, mouthY + 1.2);
+      ctx.strokeStyle = 'rgba(255,220,210,0.45)';
+      ctx.lineWidth = 1.1;
+      ctx.stroke();
+    } else {
+      // Спокойный рот: линия губ. Уголки задаёт набор рта:
+      // положительный corner — жёстко опущенные, отрицательный — ухмылка.
+      const mw = 5.2 + 1.2 * mFull;
+      const cw = mCorner * 2.4;
+      const thick = 1.1 + 1.3 * mFull;
+      ctx.beginPath();
+      ctx.moveTo(-mw, mouthY - 0.2 + cw);
+      ctx.quadraticCurveTo(0, mouthY + 2.2 * mFull, mw, mouthY - 0.6 + cw);
+      ctx.strokeStyle = lipDark;
+      ctx.lineWidth = thick;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      // Верхняя губа: у полного рта видна отдельной дугой
+      if (mFull > 0.45) {
+        ctx.beginPath();
+        ctx.moveTo(-mw * 0.72, mouthY - 0.4 + cw * 0.6);
+        ctx.quadraticCurveTo(0, mouthY - 1.4 * mFull, mw * 0.72, mouthY - 0.7 + cw * 0.6);
+        ctx.strokeStyle = lipLight;
+        ctx.lineWidth = 1.0 + mFull * 0.6;
+        ctx.stroke();
+      }
+      // Тень под нижней губой
+      ctx.beginPath();
+      ctx.moveTo(-mw * 0.75, mouthY + 1.8);
+      ctx.quadraticCurveTo(0, mouthY + 3.4, mw * 0.75, mouthY + 1.6);
+      ctx.strokeStyle = 'rgba(120,66,42,0.3)';
+      ctx.lineWidth = 1.1;
       ctx.stroke();
     }
+    ctx.restore();
   }
-
-  // Борода
-  const beard = female ? 'none' : (glad.beardStyle || 'none');
-  if (beard !== 'none' && !hidden) drawBeard(ctx, beard, headY, headR, hairC);
 
   // Кровь на лице при тяжёлом ранении головы
   if (headState && headState.ratio < 0.5) {
@@ -931,53 +2178,201 @@ function drawHead(ctx, glad, headY, headR, skin, skinDark, female, a, headState)
   }
 
   if (eq.head) drawHelmet(ctx, eq.head, headY, headR);
-  else drawHair(ctx, glad, headY, headR, hairC);
+  // Возврат из эталонной сетки лица
+  ctx.restore();
 }
 
 // ==================== БОРОДА ====================
-// Борода рисуется слоями: масса волос, затем пряди, блики и прорези.
-// Так она читается как объёмная, а не как плоское пятно.
-function drawBeard(ctx, style, headY, headR, hairC) {
+// Борода рисуется ДО черт лица: сначала масса волос, усы, пряди и блик,
+// а рот, кровь и шлем ложатся поверх. Поэтому мимика читается даже в
+// самой густой бороде. Все стили строятся из одних примитивов, но силуэт
+// у каждого свой: окладистая, верди, подкова, якорь, бакенбарды и т.д.
+function drawBeard(ctx, style, headY, headR, hairC, skin) {
   const dark = shade(hairC, -0.34);
-  const light = shade(hairC, 0.3);
+  const light = shade(hairC, 0.36);
   const mid = hairC;
+  const R = headR;
 
-  // Пряди: тонкие изогнутые линии по форме бороды
-  const strands = (x0, y0, x1, y1, count, curl) => {
+  // Заливка формы с контуром
+  const shape = (pathFn, lw) => {
+    ctx.beginPath();
+    pathFn();
+    ctx.fillStyle = mid;
+    ctx.fill();
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = lw == null ? 2.8 : lw;
+    ctx.stroke();
+  };
+
+  // Пряди: изогнутые линии, повторяющие направление роста волос
+  const strands = (x0, x1, y0, y1, count, curl, w) => {
     ctx.strokeStyle = dark;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = w || 1.5;
     for (let i = 0; i < count; i++) {
       const t = (i + 0.5) / count;
       const x = x0 + (x1 - x0) * t;
-      const len = (y1 - y0) * (0.55 + 0.45 * Math.sin(t * Math.PI));
+      const len = (y1 - y0) * (0.6 + 0.4 * Math.sin(t * Math.PI));
       ctx.beginPath();
-      ctx.moveTo(x, y0 + (y1 - y0) * 0.15);
-      ctx.quadraticCurveTo(x + curl, y0 + len * 0.6, x + curl * 0.4, y0 + len);
+      ctx.moveTo(x, y0);
+      ctx.quadraticCurveTo(x + curl * Math.sin(t * Math.PI), y0 + len * 0.6, x + curl * 0.35, y0 + len);
       ctx.stroke();
     }
   };
 
-  if (style === 'stubble') {
-    // Щетина: мелкая «просыпь» точек по щекам и подбородку, без чёткого края
+  // Затемнение внутри формы: верх у щёк светлее, низ у шеи в тени
+  const shadeMass = (pathFn, top, bot) => {
     ctx.save();
     ctx.beginPath();
-    ctx.moveTo(-headR * 0.96, headY + 2);
-    ctx.quadraticCurveTo(-headR * 0.9, headY + 22, 0, headY + 27);
-    ctx.quadraticCurveTo(headR * 0.9, headY + 22, headR * 0.96, headY + 2);
-    ctx.quadraticCurveTo(headR * 0.5, headY + 12, 0, headY + 12);
-    ctx.quadraticCurveTo(-headR * 0.5, headY + 12, -headR * 0.96, headY + 2);
+    pathFn();
+    ctx.clip();
+    const g = ctx.createLinearGradient(0, top, 0, bot);
+    g.addColorStop(0, 'rgba(0,0,0,0.28)');
+    g.addColorStop(0.45, 'rgba(0,0,0,0)');
+    g.addColorStop(1, 'rgba(0,0,0,0.3)');
+    ctx.fillStyle = g;
+    ctx.fillRect(-R - 24, top - 12, R * 2 + 48, bot - top + 24);
+    ctx.restore();
+  };
+
+  // Окно рта: в густой бороде оставляем светлое пятно кожи вокруг губ,
+  // иначе линия рта теряется в волосах и лицо становится «слепым».
+  const mouthGap = (cy, rx, ry) => {
+    if (!skin) return;
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = skin;
+    ctx.beginPath();
+    ctx.ellipse(0, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  // Усы держим над линией рта (рот живёт на headY+16..21), поэтому
+  // они не «съедают» мимику. Виды: full, walrus, thin, handlebar, horseshoe.
+  const moustache = (kind) => {
+    const y = headY + 8;
+    ctx.fillStyle = mid;
+    ctx.strokeStyle = OUTLINE;
+
+    if (kind === 'thin') {
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-1, y + 1);
+      ctx.quadraticCurveTo(-8, y - 2, -13, y + 2);
+      ctx.quadraticCurveTo(-7, y + 4, 0, y + 3);
+      ctx.quadraticCurveTo(7, y + 4, 13, y + 2);
+      ctx.quadraticCurveTo(8, y - 2, 1, y + 1);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      return;
+    }
+
+    if (kind === 'horseshoe') {
+      // Усы-подкова: крылья идут вниз по сторонам рта, сам рот открыт
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(-1, y);
+      ctx.quadraticCurveTo(-9, y - 3, -14, y + 2);
+      ctx.quadraticCurveTo(-16, y + 12, -13, y + 21);
+      ctx.quadraticCurveTo(-9, y + 22, -7, y + 18);
+      ctx.quadraticCurveTo(-10, y + 10, -8, y + 4);
+      ctx.quadraticCurveTo(-4, y + 5, 0, y + 4);
+      ctx.quadraticCurveTo(4, y + 5, 8, y + 4);
+      ctx.quadraticCurveTo(10, y + 10, 7, y + 18);
+      ctx.quadraticCurveTo(9, y + 22, 13, y + 21);
+      ctx.quadraticCurveTo(16, y + 12, 14, y + 2);
+      ctx.quadraticCurveTo(9, y - 3, 1, y);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      return;
+    }
+
+    // full / walrus / handlebar
+    const h = kind === 'walrus' ? 5 : 3.4;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(-1, y + 1);
+    ctx.quadraticCurveTo(-8, y - 4, -15, y);
+    ctx.quadraticCurveTo(-9, y + h + 4, 0, y + h + 3);
+    ctx.quadraticCurveTo(9, y + h + 4, 15, y);
+    ctx.quadraticCurveTo(8, y - 4, 1, y + 1);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    ctx.strokeStyle = light;
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(-11, y + 1.4);
+    ctx.quadraticCurveTo(-6, y + 2.2, -1, y + 3.2);
+    ctx.moveTo(11, y + 1.4);
+    ctx.quadraticCurveTo(6, y + 2.2, 1, y + 3.2);
+    ctx.stroke();
+
+    if (kind === 'handlebar') {
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 2.6;
+      [-1, 1].forEach(sd => {
+        ctx.beginPath();
+        ctx.moveTo(sd * 15, y);
+        ctx.quadraticCurveTo(sd * 20, y - 3, sd * 19, y - 8);
+        ctx.stroke();
+      });
+      ctx.fillStyle = mid;
+      [-1, 1].forEach(sd => {
+        ctx.beginPath();
+        ctx.arc(sd * 19, y - 8, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+  };
+
+  // Масса бороды: от бакенбардов по щекам, вокруг челюсти, к подбородку
+  const massPath = (bottom, spread, cheekY) => () => {
+    ctx.moveTo(-spread, headY + cheekY);
+    ctx.quadraticCurveTo(-spread - 2, headY + bottom * 0.55, -spread * 0.5, headY + bottom * 0.88);
+    ctx.quadraticCurveTo(-spread * 0.2, headY + bottom * 1.02, 0, headY + bottom);
+    ctx.quadraticCurveTo(spread * 0.2, headY + bottom * 1.02, spread * 0.5, headY + bottom * 0.88);
+    ctx.quadraticCurveTo(spread + 2, headY + bottom * 0.55, spread, headY + cheekY);
+    ctx.quadraticCurveTo(spread * 0.72, headY + cheekY + 7, spread * 0.42, headY + cheekY + 9);
+    ctx.quadraticCurveTo(0, headY + cheekY + 14, -spread * 0.42, headY + cheekY + 9);
+    ctx.quadraticCurveTo(-spread * 0.72, headY + cheekY + 7, -spread, headY + cheekY);
+    ctx.closePath();
+  };
+
+  // Окличная борода: почти прямоугольный низ со скруглёнными углами
+  const massSquarePath = (bottom, spread, cheekY) => () => {
+    ctx.moveTo(-spread, headY + cheekY);
+    ctx.quadraticCurveTo(-spread - 2, headY + bottom * 0.6, -spread * 0.82, headY + bottom * 0.92);
+    ctx.quadraticCurveTo(-spread * 0.4, headY + bottom * 1.02, 0, headY + bottom);
+    ctx.quadraticCurveTo(spread * 0.4, headY + bottom * 1.02, spread * 0.82, headY + bottom * 0.92);
+    ctx.quadraticCurveTo(spread + 2, headY + bottom * 0.6, spread, headY + cheekY);
+    ctx.quadraticCurveTo(spread * 0.72, headY + cheekY + 7, spread * 0.42, headY + cheekY + 9);
+    ctx.quadraticCurveTo(0, headY + cheekY + 14, -spread * 0.42, headY + cheekY + 9);
+    ctx.quadraticCurveTo(-spread * 0.72, headY + cheekY + 7, -spread, headY + cheekY);
+    ctx.closePath();
+  };
+
+  // --- Щетина: мелкая просыпь точек без чёткого края ---
+  if (style === 'stubble') {
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.96, headY + 2);
+    ctx.quadraticCurveTo(-R * 0.9, headY + 22, 0, headY + 27);
+    ctx.quadraticCurveTo(R * 0.9, headY + 22, R * 0.96, headY + 2);
+    ctx.quadraticCurveTo(R * 0.5, headY + 12, 0, headY + 12);
+    ctx.quadraticCurveTo(-R * 0.5, headY + 12, -R * 0.96, headY + 2);
     ctx.closePath();
     ctx.clip();
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = 0.46;
     ctx.fillStyle = mid;
-    ctx.fillRect(-headR, headY, headR * 2, 30);
-    ctx.globalAlpha = 0.62;
+    ctx.fillRect(-R, headY, R * 2, 30);
+    ctx.globalAlpha = 0.6;
     ctx.fillStyle = dark;
-    for (let i = 0; i < 46; i++) {
+    for (let i = 0; i < 52; i++) {
       const a = (i * 2.399) % (Math.PI * 2);
       const rr = (i % 7) / 7;
-      const px = Math.cos(a) * headR * 0.78 * (0.5 + rr * 0.5);
-      const py = headY + 14 + Math.sin(a) * 9 + rr * 6;
+      const px = Math.cos(a) * R * 0.8 * (0.5 + rr * 0.5);
+      const py = headY + 13 + Math.sin(a) * 9 + rr * 7;
       ctx.beginPath();
       ctx.arc(px, py, 0.9 + (i % 3) * 0.35, 0, Math.PI * 2);
       ctx.fill();
@@ -986,111 +2381,205 @@ function drawBeard(ctx, style, headY, headR, hairC) {
     return;
   }
 
+  // --- Только усы ---
   if (style === 'moustache') {
-    // Усы: два крыла с завитком на концах
-    ctx.fillStyle = mid;
-    ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 2.8;
-    ctx.beginPath();
-    ctx.moveTo(-2, headY + 12);
-    ctx.quadraticCurveTo(-10, headY + 7, -16, headY + 11);
-    ctx.quadraticCurveTo(-13, headY + 15, -8, headY + 16);
-    ctx.quadraticCurveTo(-3, headY + 18, 0, headY + 17);
-    ctx.quadraticCurveTo(3, headY + 18, 8, headY + 16);
-    ctx.quadraticCurveTo(13, headY + 15, 16, headY + 11);
-    ctx.quadraticCurveTo(10, headY + 7, 2, headY + 12);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-    ctx.strokeStyle = light;
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.moveTo(-13, headY + 11.5);
-    ctx.quadraticCurveTo(-7, headY + 12.5, -1, headY + 14);
-    ctx.moveTo(13, headY + 11.5);
-    ctx.quadraticCurveTo(7, headY + 12.5, 1, headY + 14);
-    ctx.stroke();
-    // Кончики закручены вверх
-    ctx.strokeStyle = dark;
-    ctx.lineWidth = 1.6;
-    [-1, 1].forEach(sd => {
-      ctx.beginPath();
-      ctx.moveTo(sd * 16, headY + 11);
-      ctx.quadraticCurveTo(sd * 19, headY + 7, sd * 17, headY + 5);
-      ctx.stroke();
-    });
+    moustache('handlebar');
     return;
   }
 
+  // --- Козлиная: клин на подбородке и короткие усы ---
   if (style === 'goatee') {
-    // Козлиная: клин на подбородке плюс короткие усы
-    ctx.fillStyle = mid;
-    ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 2.8;
-    ctx.beginPath();
-    ctx.moveTo(-8, headY + 15);
-    ctx.quadraticCurveTo(-7, headY + 30, 0, headY + 38);
-    ctx.quadraticCurveTo(7, headY + 30, 8, headY + 15);
-    ctx.quadraticCurveTo(0, headY + 20, -8, headY + 15);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-    strands(-5, headY + 18, 5, headY + 36, 4, 1.6);
-    ctx.fillStyle = mid;
-    ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 2.2;
-    ctx.beginPath();
-    ctx.moveTo(-1, headY + 13);
-    ctx.quadraticCurveTo(-8, headY + 11, -11, headY + 14);
-    ctx.quadraticCurveTo(-5, headY + 17, 0, headY + 16);
-    ctx.quadraticCurveTo(5, headY + 17, 11, headY + 14);
-    ctx.quadraticCurveTo(8, headY + 11, 1, headY + 13);
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
+    const p = () => {
+      ctx.moveTo(-8, headY + 15);
+      ctx.quadraticCurveTo(-7, headY + 30, 0, headY + 38);
+      ctx.quadraticCurveTo(7, headY + 30, 8, headY + 15);
+      ctx.quadraticCurveTo(0, headY + 20, -8, headY + 15);
+      ctx.closePath();
+    };
+    shape(p);
+    strands(-5, 5, headY + 18, headY + 36, 4, 1.6);
+    moustache('full');
     return;
   }
 
-  // full / long — полная борода. Разница в длине и в форме подбородка.
+  // --- Имперская: усы с закрученными концами и узкая кисточка ---
+  if (style === 'imperial') {
+    moustache('handlebar');
+    shape(() => {
+      ctx.moveTo(-5, headY + 20);
+      ctx.quadraticCurveTo(-4, headY + 30, 0, headY + 37);
+      ctx.quadraticCurveTo(4, headY + 30, 5, headY + 20);
+      ctx.quadraticCurveTo(0, headY + 24, -5, headY + 20);
+      ctx.closePath();
+    }, 2.4);
+    strands(-3, 3, headY + 23, headY + 34, 3, 1);
+    return;
+  }
+
+  // --- Подкова: усы, спускающиеся полосами по сторонам рта ---
+  if (style === 'horseshoe') {
+    moustache('horseshoe');
+    return;
+  }
+
+  // --- Ван Дейк: усы и отдельная острая бородка ---
+  if (style === 'vandyke') {
+    moustache('full');
+    const p = () => {
+      ctx.moveTo(-9, headY + 17);
+      ctx.quadraticCurveTo(-8, headY + 31, 0, headY + 42);
+      ctx.quadraticCurveTo(8, headY + 31, 9, headY + 17);
+      ctx.quadraticCurveTo(0, headY + 22, -9, headY + 17);
+      ctx.closePath();
+    };
+    shape(p);
+    shadeMass(p, headY + 16, headY + 42);
+    strands(-6, 6, headY + 20, headY + 39, 5, 1.8);
+    return;
+  }
+
+  // --- Якорь: тонкие усы, полоски у рта и клин на подбородке ---
+  if (style === 'anchor') {
+    [-1, 1].forEach(sd => {
+      shape(() => {
+        ctx.moveTo(sd * 9, headY + 13);
+        ctx.quadraticCurveTo(sd * 12, headY + 22, sd * 7, headY + 30);
+        ctx.quadraticCurveTo(sd * 5, headY + 26, sd * 6, headY + 18);
+        ctx.quadraticCurveTo(sd * 7, headY + 15, sd * 9, headY + 13);
+        ctx.closePath();
+      }, 2.2);
+    });
+    shape(() => {
+      ctx.moveTo(-6, headY + 22);
+      ctx.quadraticCurveTo(-5, headY + 30, 0, headY + 35);
+      ctx.quadraticCurveTo(5, headY + 30, 6, headY + 22);
+      ctx.quadraticCurveTo(0, headY + 25, -6, headY + 22);
+      ctx.closePath();
+    }, 2.2);
+    moustache('thin');
+    return;
+  }
+
+  // --- По контуру: узкая полоса по линии челюсти, щёки бритые ---
+  if (style === 'chinstrap') {
+    const p = () => {
+      ctx.moveTo(-R * 0.94, headY - 6);
+      ctx.quadraticCurveTo(-R * 1.0, headY + 16, -R * 0.4, headY + 27);
+      ctx.quadraticCurveTo(0, headY + 31, R * 0.4, headY + 27);
+      ctx.quadraticCurveTo(R * 1.0, headY + 16, R * 0.94, headY - 6);
+      ctx.quadraticCurveTo(R * 0.84, headY + 10, R * 0.32, headY + 20);
+      ctx.quadraticCurveTo(0, headY + 23, -R * 0.32, headY + 20);
+      ctx.quadraticCurveTo(-R * 0.84, headY + 10, -R * 0.94, headY - 6);
+      ctx.closePath();
+    };
+    shape(p, 2.6);
+    ctx.strokeStyle = light;
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.86, headY + 4);
+    ctx.quadraticCurveTo(-R * 0.7, headY + 18, -R * 0.2, headY + 24);
+    ctx.stroke();
+    return;
+  }
+
+  // --- Бакенбарды: две широкие «баки», подбородок выбрит ---
+  if (style === 'sidewhiskers') {
+    [-1, 1].forEach(sd => {
+      const p = () => {
+        ctx.moveTo(sd * R * 0.5, headY - 14);
+        ctx.quadraticCurveTo(sd * (R + 2), headY - 8, sd * (R + 1), headY + 8);
+        ctx.quadraticCurveTo(sd * (R - 1), headY + 22, sd * R * 0.52, headY + 19);
+        ctx.quadraticCurveTo(sd * R * 0.44, headY + 4, sd * R * 0.5, headY - 14);
+        ctx.closePath();
+      };
+      shape(p);
+      ctx.save();
+      ctx.beginPath();
+      p();
+      ctx.clip();
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1.4;
+      for (let i = 0; i < 4; i++) {
+        const x = sd * (R * 0.62 + i * 2.6);
+        ctx.beginPath();
+        ctx.moveTo(x, headY - 12);
+        ctx.quadraticCurveTo(x + sd * 3, headY + 4, x - sd * 1, headY + 17);
+        ctx.stroke();
+      }
+      ctx.restore();
+    });
+    moustache('full');
+    return;
+  }
+
+  // --- Короткая окладистая: широкий ровный низ ---
+  if (style === 'shortbox') {
+    const p = massSquarePath(30, 20, 5);
+    shape(p, 3);
+    shadeMass(p, headY + 4, headY + 30);
+    strands(-14, 14, headY + 14, headY + 27, 7, 1.4);
+    mouthGap(headY + 17, 9, 6);
+    moustache('full');
+    return;
+  }
+
+  // --- Верди: широкая борода средней длины с ровным срезом ---
+  if (style === 'verdi') {
+    const p = massSquarePath(46, 22, 4);
+    shape(p, 3);
+    shadeMass(p, headY + 3, headY + 46);
+    strands(-16, 16, headY + 13, headY + 42, 9, 1.8);
+    // Блик по скуле
+    ctx.strokeStyle = light;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-15, headY + 12);
+    ctx.quadraticCurveTo(-18, headY + 28, -7, headY + 38);
+    ctx.stroke();
+    mouthGap(headY + 17, 9, 6);
+    moustache('full');
+    return;
+  }
+
+  // --- Гарибальди: большая круглая борода, усы сливаются с массой ---
+  if (style === 'garibaldi') {
+    const p = massPath(50, 23, 4);
+    shape(p, 3);
+    shadeMass(p, headY + 3, headY + 50);
+    strands(-18, 18, headY + 14, headY + 45, 10, 2.2);
+    mouthGap(headY + 18, 9, 6);
+    moustache('walrus');
+    return;
+  }
+
+  // --- Утиный хвост: длинная борода, раздвоенная на два острых конца ---
+  if (style === 'ducktail') {
+    const p = massPath(44, 20, 5);
+    shape(p, 3);
+    shadeMass(p, headY + 4, headY + 44);
+    strands(-15, 15, headY + 14, headY + 40, 8, 1.8);
+    [-1, 1].forEach(sd => {
+      shape(() => {
+        ctx.moveTo(sd * 11, headY + 34);
+        ctx.quadraticCurveTo(sd * 10, headY + 50, sd * 3, headY + 60);
+        ctx.quadraticCurveTo(sd * 1.5, headY + 48, sd * 0.5, headY + 40);
+        ctx.quadraticCurveTo(sd * 6, headY + 41, sd * 11, headY + 34);
+        ctx.closePath();
+      }, 2.6);
+    });
+    mouthGap(headY + 17, 9, 6);
+    moustache('full');
+    return;
+  }
+
+  // --- full / long: полная борода, разница в длине и форме низа ---
   const long = style === 'long';
   const bottom = long ? 58 : 42;
   const spread = long ? 21 : 19;
-
-  // Масса волос
-  ctx.fillStyle = mid;
-  ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(-spread, headY + 5);
-  ctx.quadraticCurveTo(-spread - 3, headY + bottom * 0.55, -spread * 0.5, headY + bottom * 0.88);
-  ctx.quadraticCurveTo(-spread * 0.2, headY + bottom * 1.02, 0, headY + bottom);
-  ctx.quadraticCurveTo(spread * 0.2, headY + bottom * 1.02, spread * 0.5, headY + bottom * 0.88);
-  ctx.quadraticCurveTo(spread + 3, headY + bottom * 0.55, spread, headY + 5);
-  // Верх бороды повторяет линию щёк и обходит усы
-  ctx.quadraticCurveTo(spread * 0.72, headY + 12, spread * 0.42, headY + 14);
-  ctx.quadraticCurveTo(0, headY + 20, -spread * 0.42, headY + 14);
-  ctx.quadraticCurveTo(-spread * 0.72, headY + 12, -spread, headY + 5);
-  ctx.closePath();
-  ctx.fill(); ctx.stroke();
-
-  // Затенение у шеи — борода «уходит» под подбородок
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(-spread, headY + 5);
-  ctx.quadraticCurveTo(-spread - 3, headY + bottom * 0.55, -spread * 0.5, headY + bottom * 0.88);
-  ctx.quadraticCurveTo(-spread * 0.2, headY + bottom * 1.02, 0, headY + bottom);
-  ctx.quadraticCurveTo(spread * 0.2, headY + bottom * 1.02, spread * 0.5, headY + bottom * 0.88);
-  ctx.quadraticCurveTo(spread + 3, headY + bottom * 0.55, spread, headY + 5);
-  ctx.quadraticCurveTo(0, headY + 22, -spread, headY + 5);
-  ctx.closePath();
-  ctx.clip();
-  const g = ctx.createLinearGradient(0, headY + 6, 0, headY + bottom);
-  g.addColorStop(0, 'rgba(0,0,0,0.26)');
-  g.addColorStop(0.45, 'rgba(0,0,0,0)');
-  g.addColorStop(1, 'rgba(0,0,0,0.3)');
-  ctx.fillStyle = g;
-  ctx.fillRect(-spread - 4, headY, spread * 2 + 8, bottom + 6);
-  ctx.restore();
-
-  // Пряди
-  strands(-spread * 0.78, headY + 14, spread * 0.78, headY + bottom * 0.9, 9, long ? 2.2 : 1.5);
+  const p = massPath(bottom, spread, 5);
+  shape(p, 3);
+  shadeMass(p, headY + 5, headY + bottom);
+  strands(-spread * 0.78, spread * 0.78, headY + 14, headY + bottom * 0.9, 9, long ? 2.2 : 1.5);
 
   // Блик по левой скуле — объём
   ctx.strokeStyle = light;
@@ -1100,18 +2589,8 @@ function drawBeard(ctx, style, headY, headR, hairC) {
   ctx.quadraticCurveTo(-spread * 0.86, headY + bottom * 0.4, -spread * 0.34, headY + bottom * 0.7);
   ctx.stroke();
 
-  // Усы поверх бороды, чтобы линия рта читалась
-  ctx.fillStyle = mid;
-  ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 2.4;
-  ctx.beginPath();
-  ctx.moveTo(-1, headY + 12);
-  ctx.quadraticCurveTo(-8, headY + 10, -13, headY + 13);
-  ctx.quadraticCurveTo(-7, headY + 16, 0, headY + 15);
-  ctx.quadraticCurveTo(7, headY + 16, 13, headY + 13);
-  ctx.quadraticCurveTo(8, headY + 10, 1, headY + 12);
-  ctx.closePath();
-  ctx.fill(); ctx.stroke();
+  mouthGap(headY + 17, 9, 6);
+  moustache('full');
 
   // Длинная борода: два «языка» на конце и седые пряди
   if (long) {
@@ -1176,13 +2655,16 @@ function drawHair(ctx, glad, headY, headR, hairC) {
   const style = glad.hairStyle || 'short';
   const light = shade(hairC, 0.42);
 
+  // Линия роста волос: лоб должен занимать около трети лица. Раньше
+  // волосы спускались почти до бровей, и любая стрижка читалась как шапка.
   const cap = () => {
     ctx.beginPath();
-    ctx.moveTo(-headR - 1, headY - 2);
+    ctx.moveTo(-headR - 1, headY - 7);
     ctx.quadraticCurveTo(-headR - 2, headY - 33, 0, headY - 34);
-    ctx.quadraticCurveTo(headR + 2, headY - 33, headR + 1, headY - 2);
-    ctx.quadraticCurveTo(headR - 4, headY - 18, 0, headY - 20);
-    ctx.quadraticCurveTo(-headR + 4, headY - 18, -headR - 1, headY - 2);
+    ctx.quadraticCurveTo(headR + 2, headY - 33, headR + 1, headY - 7);
+    ctx.quadraticCurveTo(headR - 5, headY - 21, headR * 0.42, headY - 25);
+    ctx.quadraticCurveTo(0, headY - 27.5, -headR * 0.42, headY - 25);
+    ctx.quadraticCurveTo(-headR + 5, headY - 21, -headR - 1, headY - 7);
     ctx.closePath();
   };
 
@@ -1432,6 +2914,253 @@ function drawHair(ctx, glad, headY, headR, hairC) {
       ctx.fill();
     }
     ctx.restore();
+  } else if (style === 'crew') {
+    // Ёжик: короткая щётка, ровная линия роста, чуть длиннее к макушке
+    hairLayers(ctx, hairC, cap, headY - 36, headY - 2);
+    ctx.strokeStyle = shade(hairC, -0.34);
+    ctx.lineWidth = 1.4;
+    for (let i = -5; i <= 5; i++) {
+      const x = i * 4.4;
+      const topY = headY - 31 + Math.abs(i) * 0.9;
+      ctx.beginPath();
+      ctx.moveTo(x, topY);
+      ctx.lineTo(x + i * 0.5, topY - 3.4);
+      ctx.stroke();
+    }
+    capShine();
+  } else if (style === 'slick') {
+    // Зачёс назад: волосы уложены назад, линия с пробором и объёмом у лба
+    hairLayers(ctx, hairC, () => {
+      ctx.beginPath();
+      ctx.moveTo(-headR - 2, headY - 3);
+      ctx.quadraticCurveTo(-headR - 4, headY - 34, -2, headY - 36);
+      ctx.quadraticCurveTo(headR + 3, headY - 35, headR + 2, headY - 4);
+      ctx.quadraticCurveTo(headR - 4, headY - 15, 4, headY - 22);
+      ctx.quadraticCurveTo(-headR * 0.3, headY - 26, -headR - 2, headY - 3);
+      ctx.closePath();
+    }, headY - 38, headY - 2);
+    // Гребни-дорожки от лба назад
+    ctx.strokeStyle = shade(hairC, -0.36);
+    ctx.lineWidth = 1.5;
+    for (let i = -3; i <= 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * 5.4, headY - 24);
+      ctx.quadraticCurveTo(i * 7, headY - 31, i * 6, headY - 34);
+      ctx.stroke();
+    }
+    capShine();
+  } else if (style === 'parted') {
+    // Пробор: пробор сбоку, две массы волос, одна больше другой
+    hairLayers(ctx, hairC, cap, headY - 36, headY - 2);
+    ctx.strokeStyle = shade(hairC, -0.5);
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(-7, headY - 33);
+    ctx.quadraticCurveTo(-6, headY - 20, -8, headY - 6);
+    ctx.stroke();
+    ctx.strokeStyle = shade(hairC, -0.3);
+    ctx.lineWidth = 1.4;
+    [-1, 1].forEach(sd => {
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.moveTo(-7 + sd * (3 + i * 4), headY - 30);
+        ctx.quadraticCurveTo(-6 + sd * (5 + i * 5), headY - 22, -8 + sd * (7 + i * 6), headY - 12);
+        ctx.stroke();
+      }
+    });
+    capShine();
+  } else if (style === 'fringe') {
+    // Чёлка: ровная масса надо лбом с зубчатым краем
+    hairLayers(ctx, hairC, () => {
+      ctx.beginPath();
+      ctx.moveTo(-headR - 1, headY - 2);
+      ctx.quadraticCurveTo(-headR - 2, headY - 33, 0, headY - 34);
+      ctx.quadraticCurveTo(headR + 2, headY - 33, headR + 1, headY - 2);
+      ctx.quadraticCurveTo(headR * 0.6, headY - 12, headR * 0.2, headY - 9);
+      ctx.quadraticCurveTo(-headR * 0.3, headY - 6, -headR - 1, headY - 2);
+      ctx.closePath();
+    }, headY - 36, headY - 2);
+    ctx.strokeStyle = shade(hairC, -0.3);
+    ctx.lineWidth = 1.4;
+    for (let i = -4; i <= 4; i++) {
+      const x = i * 4.8;
+      ctx.beginPath();
+      ctx.moveTo(x, headY - 26);
+      ctx.quadraticCurveTo(x + 1, headY - 16, x + 0.5, headY - 10);
+      ctx.stroke();
+    }
+    capShine();
+  } else if (style === 'spiky') {
+    // Рваные пряди: отдельные острые клинья вверх и в стороны
+    ctx.fillStyle = hairC;
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.8;
+    for (let i = 0; i < 8; i++) {
+      const t = i / 7;
+      const bx = -headR * 0.86 + t * headR * 1.72;
+      const hgt = 12 + Math.sin(t * Math.PI) * 12 + (i % 2 ? 4 : 0);
+      ctx.beginPath();
+      ctx.moveTo(bx - 5, headY - 22);
+      ctx.quadraticCurveTo(bx - 2, headY - 22 - hgt * 0.8, bx + 1, headY - 20 - hgt);
+      ctx.quadraticCurveTo(bx + 4, headY - 22 - hgt * 0.5, bx + 5, headY - 21);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
+    // Основа-шапка под прядями
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    hairLayers(ctx, hairC, cap, headY - 32, headY - 2);
+    ctx.restore();
+    ctx.strokeStyle = shade(hairC, 0.34);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(-12, headY - 28);
+    ctx.quadraticCurveTo(0, headY - 34, 12, headY - 27);
+    ctx.stroke();
+  } else if (style === 'halfup') {
+    // Полухвост: волосы собраны у затылка, часть спадает по бокам
+    const path = () => {
+      ctx.beginPath();
+      ctx.moveTo(-headR - 2, headY + 14);
+      ctx.quadraticCurveTo(-headR - 5, headY - 34, 0, headY - 35);
+      ctx.quadraticCurveTo(headR + 5, headY - 34, headR + 2, headY + 14);
+      ctx.quadraticCurveTo(headR + 4, headY + 24, headR - 4, headY + 26);
+      ctx.quadraticCurveTo(headR - 6, headY - 10, 0, headY - 16);
+      ctx.quadraticCurveTo(-headR + 6, headY - 10, -headR + 4, headY + 26);
+      ctx.quadraticCurveTo(-headR - 4, headY + 24, -headR - 2, headY + 14);
+      ctx.closePath();
+    };
+    hairLayers(ctx, hairC, path, headY - 37, headY + 26);
+    // Хвостик сбоку сзади
+    ctx.fillStyle = hairC;
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.8;
+    ctx.beginPath();
+    ctx.moveTo(-headR + 1, headY - 8);
+    ctx.quadraticCurveTo(-headR - 12, headY + 4, -headR - 6, headY + 24);
+    ctx.quadraticCurveTo(-headR + 1, headY + 12, -headR + 6, headY - 4);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#8a3a2a';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(-headR, headY - 6);
+    ctx.lineTo(-headR + 6, headY + 1);
+    ctx.stroke();
+    capShine();
+  } else if (style === 'twinbraids') {
+    // Две косы: шапка волос и две плетёные косы по бокам
+    hairLayers(ctx, hairC, cap, headY - 36, headY - 2);
+    capShine();
+    [-1, 1].forEach(sd => {
+      const bx = sd * (headR + 1);
+      for (let i = 0; i < 5; i++) {
+        const cy = headY + 6 + i * 8.4;
+        const off = (i % 2 ? 2.4 : -2.4);
+        ctx.fillStyle = i % 2 ? shade(hairC, 0.1) : hairC;
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.ellipse(bx + off, cy, 4.8, 5.8, off * 0.08, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      }
+      // Ленточка на конце
+      ctx.fillStyle = sd > 0 ? '#a83b30' : '#3a6a8a';
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(bx - 4, headY + 48);
+      ctx.lineTo(bx + 4, headY + 47);
+      ctx.lineTo(bx + 2, headY + 52);
+      ctx.lineTo(bx - 2, headY + 52);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    });
+  } else if (style === 'afro') {
+    // Афро: пышное облако из крупных завитков вокруг головы
+    ctx.fillStyle = hairC;
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 20, headR + 10, headR + 4, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // Кучерявая фактура: кольца по краю облака
+    const rings = [];
+    for (let i = 0; i < 12; i++) {
+      const a = Math.PI * (1.05 + (i / 11) * 0.9);
+      rings.push([Math.cos(a) * (headR + 8), headY - 20 + Math.sin(a) * (headR + 2)]);
+    }
+    rings.forEach(([cx, cy]) => {
+      ctx.fillStyle = shade(hairC, 0.06);
+      ctx.strokeStyle = shade(hairC, -0.4);
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 4.6, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    });
+    ctx.strokeStyle = shade(hairC, 0.4);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(-headR * 0.4, headY - 34, 8, Math.PI * 1.1, Math.PI * 1.7);
+    ctx.stroke();
+  } else if (style === 'wavy') {
+    // Волны: длинные волнистые пряди, мягкий контур с локонами
+    const path = () => {
+      ctx.beginPath();
+      ctx.moveTo(-headR - 3, headY + 18);
+      ctx.quadraticCurveTo(-headR - 7, headY - 34, 0, headY - 35);
+      ctx.quadraticCurveTo(headR + 7, headY - 34, headR + 3, headY + 18);
+      ctx.quadraticCurveTo(headR + 8, headY + 24, headR + 1, headY + 28);
+      ctx.quadraticCurveTo(headR + 2, headY + 14, headR - 6, headY + 4);
+      ctx.quadraticCurveTo(headR - 8, headY - 14, 0, headY - 17);
+      ctx.quadraticCurveTo(-headR + 8, headY - 14, -headR + 6, headY + 4);
+      ctx.quadraticCurveTo(-headR - 2, headY + 14, -headR - 1, headY + 28);
+      ctx.quadraticCurveTo(-headR - 8, headY + 24, -headR - 3, headY + 18);
+      ctx.closePath();
+    };
+    hairLayers(ctx, hairC, path, headY - 37, headY + 28);
+    ctx.strokeStyle = shade(hairC, -0.3);
+    ctx.lineWidth = 1.5;
+    [-1, 1].forEach(sd => {
+      for (let i = 0; i < 3; i++) {
+        const x0 = sd * (headR - 1 - i * 4);
+        ctx.beginPath();
+        ctx.moveTo(x0, headY - 10 + i * 2);
+        ctx.quadraticCurveTo(x0 + sd * 6, headY + 2, x0 - sd * 2, headY + 12);
+        ctx.quadraticCurveTo(x0 + sd * 4, headY + 20, x0 - sd * 1, headY + 27);
+        ctx.stroke();
+      }
+    });
+    capShine();
+  } else if (style === 'undercut') {
+    // Выбритый висок: объём сверху, короткая тень по бокам
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    ctx.fillStyle = hairC;
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.ellipse(sd * headR * 0.92, headY - 6, 5, 14, sd * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+    hairLayers(ctx, hairC, () => {
+      ctx.beginPath();
+      ctx.moveTo(-headR + 1, headY - 8);
+      ctx.quadraticCurveTo(-headR - 1, headY - 34, 0, headY - 35);
+      ctx.quadraticCurveTo(headR + 1, headY - 34, headR - 1, headY - 8);
+      ctx.quadraticCurveTo(headR - 8, headY - 18, 2, headY - 22);
+      ctx.quadraticCurveTo(-headR + 8, headY - 18, -headR + 1, headY - 8);
+      ctx.closePath();
+    }, headY - 37, headY - 6);
+    ctx.strokeStyle = shade(hairC, -0.35);
+    ctx.lineWidth = 1.5;
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * 6, headY - 22);
+      ctx.quadraticCurveTo(i * 8, headY - 29, i * 7, headY - 33);
+      ctx.stroke();
+    }
+    capShine();
   }
 }
 
@@ -1481,16 +3210,313 @@ function helmetCrest(ctx, crest, headY, headR) {
   }
 }
 
-// Детали наручей новых школ: рисуются в системе руки (предплечье вдоль оси Y)
+// Детали наручей: рисуются в системе руки (предплечье вдоль оси Y).
+// У каждого стиля свой силуэт, а не только цвет: обмотки, створки,
+// сегменты, кольчуга, чешуя, наплечник, шины, ламелляр.
 function drawArmSchoolDetail(ctx, arms, hx, hy) {
   if (!arms) return;
   const vis = arms.vis;
-  if (!['medieval', 'china', 'rus', 'mongol'].includes(vis)) return;
+  const KNOWN = ['medieval', 'china', 'rus', 'mongol',
+    'leatherguard', 'wraps', 'armwraps', 'hideguard',
+    'bronzebracer', 'bracers', 'manica', 'gladmanica', 'vambrace',
+    'goldarm', 'titanarm', 'chainsleeve', 'scalearm', 'pauldron',
+    'splintarm', 'lamellararm', 'fauldarm'];
+  if (!KNOWN.includes(vis)) return;
   const trim = arms.trim || '#c9a45c';
+  const col = arms.color || '#8a7a66';
   ctx.save();
   ctx.translate(hx * 0.75, hy - 8);
   ctx.strokeStyle = OUTLINE;
   ctx.lineWidth = 2.2;
+
+  // --- Ткань и кожа: мягкие силуэты, без металлического блеска ---
+  if (vis === 'wraps' || vis === 'armwraps') {
+    const fine = vis === 'armwraps';
+    // Основа — полоса ткани/ремней вокруг предплечья
+    ctx.fillStyle = shade(col, -0.08);
+    roundRect(ctx, -6, -7.5, 12, 15, 3);
+    ctx.fill();
+    // Диагональные витки
+    ctx.strokeStyle = fine ? shade(col, 0.24) : shade(col, -0.35);
+    ctx.lineWidth = fine ? 1.6 : 2.4;
+    for (let i = 0; i < (fine ? 5 : 3); i++) {
+      const yy = -6 + i * (fine ? 3 : 4.6);
+      ctx.beginPath();
+      ctx.moveTo(-6, yy);
+      ctx.lineTo(6, yy + (fine ? 2 : 3));
+      ctx.stroke();
+    }
+    // Узел с хвостиком
+    ctx.fillStyle = fine ? shade(col, 0.3) : '#e8dcc0';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(5.4, 4, 1.9, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  if (vis === 'leatherguard' || vis === 'hideguard') {
+    const hard = vis === 'hideguard';
+    ctx.fillStyle = hard ? shade(col, 0.14) : col;
+    roundRect(ctx, -6, -7, 12, 14, hard ? 2.5 : 3.5);
+    ctx.fill(); ctx.stroke();
+    if (hard) {
+      // Жёсткий щиток: прошивка по периметру и заклёпки
+      ctx.strokeStyle = 'rgba(240,232,208,0.7)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([2.4, 2]);
+      roundRect(ctx, -4.6, -5.6, 9.2, 11.2, 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = trim;
+      [-3, 0, 3].forEach(yy => {
+        ctx.beginPath(); ctx.arc(0, yy, 1.1, 0, Math.PI * 2); ctx.fill();
+      });
+    } else {
+      // Ремни крест-накрест
+      ctx.strokeStyle = shade(col, -0.42);
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(-5, -6); ctx.lineTo(5, 6);
+      ctx.moveTo(5, -6); ctx.lineTo(-5, 6);
+      ctx.stroke();
+      ctx.fillStyle = trim;
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(0, 0, 2.2, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+
+  // --- Металлические створки: единая основа, разный декор ---
+  if (['bronzebracer', 'bracers', 'vambrace', 'goldarm', 'titanarm', 'fauldarm'].includes(vis)) {
+    const big = vis === 'titanarm';
+    const w = big ? 15 : 12, h = big ? 17 : 14;
+    ctx.fillStyle = metalFill(ctx, col, -h / 2 - 4, h / 2 + 4);
+    roundRect(ctx, -w / 2, -h / 2, w, h, big ? 4.5 : 4);
+    ctx.fill(); ctx.stroke();
+    // Фаска-блик по левому краю
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    roundRect(ctx, -w / 2 + 1.4, -h / 2 + 1.6, 3, h - 3.2, 1.4);
+    ctx.fill();
+
+    if (vis === 'bronzebracer') {
+      // Две створки и крупные заклёпки
+      ctx.strokeStyle = shade(col, -0.4);
+      ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(-w / 2, 0); ctx.lineTo(w / 2, 0); ctx.stroke();
+      ctx.fillStyle = trim;
+      [-2.6, 2.6].forEach(yy => {
+        ctx.beginPath(); ctx.arc(0, yy, 1.5, 0, Math.PI * 2); ctx.fill();
+      });
+    } else if (vis === 'bracers') {
+      // Гладкая сталь: только фаска и узкий ремень
+      ctx.strokeStyle = shade(col, -0.35);
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 + 1.5, h / 2 - 3.4);
+      ctx.lineTo(w / 2 - 1.5, h / 2 - 3.4);
+      ctx.stroke();
+    } else if (vis === 'vambrace') {
+      // Толстая створка: два ремня с пряжками
+      ctx.fillStyle = '#5a3f22';
+      [-1, 1].forEach(sd => {
+        roundRect(ctx, -w / 2 - 0.6, sd * (h / 2 - 4.6), w + 1.2, 3, 1.2);
+        ctx.fill();
+      });
+      ctx.fillStyle = trim;
+      roundRect(ctx, w / 2 - 3.4, -h / 2 + 3, 2.4, 3, 1);
+      ctx.fill();
+    } else if (vis === 'goldarm') {
+      // Золотая гравировка: завитки и самоцвет
+      ctx.strokeStyle = shade(col, -0.5);
+      ctx.lineWidth = 1.3;
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.moveTo(-w / 2 + 3, i * 4);
+        ctx.quadraticCurveTo(0, i * 4 + 2.6, w / 2 - 3, i * 4);
+        ctx.stroke();
+      }
+      ctx.fillStyle = '#7a1a12';
+      ctx.beginPath(); ctx.arc(0, -h / 2 + 3.4, 2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'rgba(255,240,190,0.9)';
+      ctx.beginPath(); ctx.arc(-0.6, -h / 2 + 3, 0.7, 0, Math.PI * 2); ctx.fill();
+    } else if (vis === 'titanarm') {
+      // Огромные наручи с шипами по краю
+      ctx.fillStyle = '#cfd8e0';
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1.8;
+      [-1, 1].forEach(sd => {
+        for (let i = -1; i <= 1; i++) {
+          ctx.beginPath();
+          ctx.moveTo(sd * (w / 2 - 1), i * 4.4);
+          ctx.lineTo(sd * (w / 2 + 4), i * 4.4 - 2);
+          ctx.lineTo(sd * (w / 2 - 1), i * 4.4 - 4);
+          ctx.closePath();
+          ctx.fill(); ctx.stroke();
+        }
+      });
+    } else {
+      // fauldarm: оплечье сверху и гребень по створке
+      ctx.fillStyle = shade(col, 0.18);
+      ctx.beginPath();
+      ctx.moveTo(-w / 2 - 1, -h / 2 + 1);
+      ctx.quadraticCurveTo(0, -h / 2 - 6.5, w / 2 + 1, -h / 2 + 1);
+      ctx.quadraticCurveTo(0, -h / 2 - 2, -w / 2 - 1, -h / 2 + 1);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      ctx.strokeStyle = trim;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(0, -h / 2 + 2);
+      ctx.lineTo(0, h / 2 - 2);
+      ctx.stroke();
+      ctx.fillStyle = trim;
+      [-1, 1].forEach(sd => {
+        ctx.beginPath(); ctx.arc(sd * 3.4, 2.6, 1.2, 0, Math.PI * 2); ctx.fill();
+      });
+    }
+    ctx.restore();
+    return;
+  }
+
+  // --- Сегментные маники: набор горизонтальных пластин ---
+  if (vis === 'manica' || vis === 'gladmanica') {
+    const bronze = vis === 'gladmanica';
+    for (let i = 0; i < 4; i++) {
+      ctx.fillStyle = bronze && i % 2 ? trim : shade(col, i % 2 ? 0.16 : -0.04);
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1.6;
+      roundRect(ctx, -6, -7 + i * 3.7, 12, 3.3, 1.4);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.32)';
+      roundRect(ctx, -5, -6.5 + i * 3.7, 6, 1, 0.5);
+      ctx.fill();
+    }
+    if (bronze) {
+      ctx.fillStyle = trim;
+      ctx.beginPath(); ctx.arc(0, 0.4, 1.5, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    return;
+  }
+
+  // --- Кольчужный рукав ---
+  if (vis === 'chainsleeve') {
+    ctx.fillStyle = shade(col, -0.06);
+    roundRect(ctx, -6, -7.5, 12, 15, 4);
+    ctx.fill();
+    ctx.strokeStyle = shade(col, -0.42);
+    ctx.lineWidth = 1.1;
+    for (let row = 0; row < 6; row++) {
+      for (let k = -1; k <= 1; k++) {
+        ctx.beginPath();
+        ctx.arc(k * 4 + (row % 2 ? 2 : 0), -6 + row * 2.4, 1.7, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2;
+    roundRect(ctx, -6, -7.5, 12, 15, 4);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  // --- Чешуйчатый наруч ---
+  if (vis === 'scalearm') {
+    ctx.fillStyle = shade(col, -0.05);
+    roundRect(ctx, -6, -7.5, 12, 15, 4);
+    ctx.fill();
+    for (let row = 0; row < 4; row++) {
+      for (let k = -1; k <= 1; k++) {
+        ctx.fillStyle = row % 2 ? shade(col, 0.14) : col;
+        ctx.strokeStyle = shade(col, -0.42);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(k * 4 + (row % 2 ? 2 : 0), -5.4 + row * 3.4, 2.4, 0, Math.PI);
+        ctx.fill(); ctx.stroke();
+      }
+    }
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2;
+    roundRect(ctx, -6, -7.5, 12, 15, 4);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  // --- Шинный наруч: полосы на кожаной основе ---
+  if (vis === 'splintarm') {
+    ctx.fillStyle = '#6a4a2c';
+    roundRect(ctx, -6, -7.5, 12, 15, 3.5);
+    ctx.fill(); ctx.stroke();
+    for (let i = -1; i <= 1; i++) {
+      ctx.fillStyle = metalFill(ctx, col, -8, 8);
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1.4;
+      roundRect(ctx, i * 3.7 - 1.3, -6.4, 2.6, 13, 1.2);
+      ctx.fill(); ctx.stroke();
+    }
+    ctx.fillStyle = trim;
+    ctx.beginPath(); ctx.arc(0, 5.4, 1.3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    return;
+  }
+
+  // --- Ламеллярные рукава: мелкая сетка пластин ---
+  if (vis === 'lamellararm') {
+    for (let row = 0; row < 4; row++) {
+      for (let k = -1; k <= 1; k++) {
+        ctx.fillStyle = row % 2 ? shade(col, 0.12) : shade(col, -0.08);
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 1.1;
+        roundRect(ctx, k * 4 - 1.9, -7 + row * 3.6, 3.8, 3.2, 1);
+        ctx.fill(); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        ctx.fillRect(k * 4 - 1.2, -6.4 + row * 3.6, 2.4, 0.8);
+      }
+    }
+    ctx.strokeStyle = shade(col, -0.5);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(-6, -7.2); ctx.lineTo(-6, 7.2);
+    ctx.moveTo(6, -7.2); ctx.lineTo(6, 7.2);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  // --- Наплечник: выпуклая створка сверху плюс наруч ---
+  if (vis === 'pauldron') {
+    ctx.fillStyle = metalFill(ctx, col, -10, 10);
+    // Верхняя выпуклая створка
+    ctx.beginPath();
+    ctx.moveTo(-8, -3);
+    ctx.quadraticCurveTo(-7, -11, 1, -11);
+    ctx.quadraticCurveTo(8, -10, 8, -2);
+    ctx.quadraticCurveTo(0, 1, -8, -3);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(-2, -7, 4.4, 2, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+    // Наруч ниже
+    ctx.fillStyle = shade(col, -0.1);
+    roundRect(ctx, -5.5, 0, 11, 8, 3);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = trim;
+    roundRect(ctx, -5.5, 4.4, 11, 1.8, 0.8);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
+  // --- Школы: Средневековье, Китай, Русь, Монголия ---
   if (vis === 'medieval') {
     // Стальная створка с фаской и ремнём
     ctx.fillStyle = shade(arms.color, 0.22);
@@ -1541,11 +3567,538 @@ function drawArmSchoolDetail(ctx, arms, hx, hy) {
   ctx.restore();
 }
 
+// ==================== НОВЫЕ МОДЕЛИ ШЛЕМОВ ====================
+// Каждый стиль — свой силуэт, а не перекраска. Возвращает true, если
+// шлем отрисован здесь и старая ветка drawHelmet не нужна.
+function drawHelmetModel(ctx, vis, helm, headY, headR) {
+  const hc = helm.color || '#b0bac4';
+  const trim = helm.trim || null;
+  const R = headR;
+
+  if (vis === 'headband') {
+    // Повязка: узкая полоса на лбу с узлом и хвостиками
+    ctx.fillStyle = hc;
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-R - 1, headY - 12);
+    ctx.quadraticCurveTo(0, headY - 20, R + 1, headY - 12);
+    ctx.lineTo(R + 1, headY - 2);
+    ctx.quadraticCurveTo(0, headY - 10, -R - 1, headY - 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Шов
+    ctx.strokeStyle = shade(hc, -0.35);
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(-R + 2, headY - 8);
+    ctx.quadraticCurveTo(0, headY - 14, R - 2, headY - 8);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Хвостики справа
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.6;
+    [-1, 1].forEach((k, i) => {
+      ctx.beginPath();
+      ctx.moveTo(R - 1, headY - 7);
+      ctx.quadraticCurveTo(R + 8 + i * 3, headY - 4 + k * 4, R + 4 + i * 4, headY + 8 + k * 3);
+      ctx.stroke();
+    });
+    return true;
+  }
+
+  if (vis === 'leathercap') {
+    // Кожаный шлем: округлый купол, шнуровка по шву, заклёпки, ремешок
+    ctx.fillStyle = metalFill(ctx, hc, headY - 30, headY + 8);
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 4, R + 2, R * 0.98, 0, Math.PI, 0);
+    ctx.lineTo(R + 2, headY + 4);
+    ctx.lineTo(-R - 2, headY + 4);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Центральный шов со шнуровкой
+    ctx.strokeStyle = shade(hc, -0.4);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, headY - R - 1);
+    ctx.lineTo(0, headY + 3);
+    ctx.stroke();
+    ctx.strokeStyle = '#e8dcc0';
+    ctx.lineWidth = 1.4;
+    for (let i = 0; i < 3; i++) {
+      const yy = headY - R * 0.72 + i * 7;
+      ctx.beginPath();
+      ctx.moveTo(-3, yy); ctx.lineTo(3, yy + 4);
+      ctx.moveTo(3, yy); ctx.lineTo(-3, yy + 4);
+      ctx.stroke();
+    }
+    // Заклёпки по ободу
+    ctx.fillStyle = '#c9a45c';
+    rivets(ctx, -R + 2, R - 2, headY + 1, 5, '#c9a45c');
+    // Ремешок под подбородок
+    ctx.strokeStyle = shade(hc, -0.45);
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(-R + 1, headY + 3);
+    ctx.quadraticCurveTo(0, headY + R * 0.9, R - 1, headY + 3);
+    ctx.stroke();
+    return true;
+  }
+
+  if (vis === 'spangen') {
+    // Спангенхельм: купол из 4 клёпаных сегментов, обод и наносник
+    ctx.fillStyle = metalFill(ctx, hc, headY - 30, headY + 6);
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 4, R + 2, R * 1.02, 0, Math.PI, 0);
+    ctx.lineTo(R + 2, headY + 4);
+    ctx.lineTo(-R - 2, headY + 4);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Радиальные рёбра каркаса
+    ctx.strokeStyle = shade(hc, -0.3);
+    ctx.lineWidth = 2.6;
+    [-0.62, 0, 0.62].forEach(k => {
+      ctx.beginPath();
+      ctx.moveTo(0, headY - R - 2);
+      ctx.quadraticCurveTo(k * R * 1.1, headY - R * 0.4, k * (R + 1), headY + 2);
+      ctx.stroke();
+    });
+    // Обод
+    ctx.fillStyle = trim || shade(hc, -0.12);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.4;
+    roundRect(ctx, -R - 2, headY - 1, R * 2 + 4, 6, 2);
+    ctx.fill(); ctx.stroke();
+    rivets(ctx, -R + 1, R - 1, headY + 2, 6, 'rgba(40,32,20,0.65)');
+    // Наносник
+    ctx.fillStyle = shade(hc, 0.14);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.6;
+    roundRect(ctx, -2.6, headY - 1, 5.2, 17, 2);
+    ctx.fill(); ctx.stroke();
+    // Блик
+    ctx.fillStyle = 'rgba(255,255,255,0.34)';
+    ctx.beginPath();
+    ctx.ellipse(-R * 0.45, headY - R * 0.55, 7, 5, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    return true;
+  }
+
+  if (vis === 'thracian') {
+    // Фракийский: узкий купол, высокий гребень вдоль головы, широкий назатыльник
+    if (helm.crest) helmetCrest(ctx, helm.crest, headY, R);
+    // Купол
+    ctx.fillStyle = metalFill(ctx, hc, headY - R - 6, headY + R);
+    ctx.beginPath();
+    ctx.ellipse(0, headY + 1, R + 1, R * 1.06, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // Поле-назатыльник сзади: широкий отворот
+    ctx.fillStyle = shade(hc, -0.16);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-R - 2, headY + 4);
+    ctx.quadraticCurveTo(-R - 12, headY + 14, -R + 4, headY + 18);
+    ctx.lineTo(R - 2, headY + 12);
+    ctx.quadraticCurveTo(R + 4, headY + 2, R + 2, headY - 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Решётка вместо лица
+    ctx.fillStyle = '#241c15';
+    for (let i = 0; i < 3; i++) {
+      roundRect(ctx, 2 + i * 7, headY - 4, 4.6, 15, 2);
+      ctx.fill();
+    }
+    // Глазная щель
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(-10, headY - 1, 9, 6.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = trim || shade(hc, -0.34);
+    roundRect(ctx, -R - 1, headY + R - 3, R * 2 + 2, 4, 2);
+    ctx.fill();
+    return true;
+  }
+
+  if (vis === 'sutton') {
+    // Секуторский: полностью глухое лицо, круглые глазницы, без гребня
+    ctx.fillStyle = metalFill(ctx, hc, headY - R - 8, headY + R + 4);
+    ctx.beginPath();
+    ctx.ellipse(0, headY + 1, R + 2, R * 1.1, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // Две круглые глазницы с решёткой
+    [-1, 1].forEach(sd => {
+      ctx.fillStyle = '#1a1410';
+      ctx.beginPath();
+      ctx.arc(sd * 8, headY - 3, 6.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = shade(hc, -0.25);
+      ctx.lineWidth = 1.4;
+      for (let i = -1; i <= 1; i++) {
+        ctx.beginPath();
+        ctx.moveTo(sd * 8 + i * 3, headY - 9);
+        ctx.lineTo(sd * 8 + i * 3, headY + 3);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 3;
+    });
+    // Выпуклые «брови» над глазницами
+    ctx.strokeStyle = shade(hc, 0.2);
+    ctx.lineWidth = 2.4;
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.arc(sd * 8, headY - 3, 8.6, Math.PI * 1.15, Math.PI * 1.85);
+      ctx.stroke();
+    });
+    // Клёпаный шов по центру
+    ctx.strokeStyle = shade(hc, -0.32);
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(0, headY - R - 4);
+    ctx.lineTo(0, headY + R - 2);
+    ctx.stroke();
+    ctx.fillStyle = trim || shade(hc, -0.34);
+    roundRect(ctx, -R - 1, headY + R + 1, R * 2 + 2, 4, 2);
+    ctx.fill();
+    return true;
+  }
+
+  if (vis === 'bascinet') {
+    // Бацинет: вытянутый купол, подвижное забрало, кольчужная бармица
+    ctx.fillStyle = metalFill(ctx, hc, headY - R - 20, headY + R);
+    ctx.beginPath();
+    ctx.moveTo(-R - 2, headY + 2);
+    ctx.quadraticCurveTo(-R - 3, headY - R * 0.85, -3, headY - R - 14);
+    ctx.quadraticCurveTo(0, headY - R - 19, 3, headY - R - 14);
+    ctx.quadraticCurveTo(R + 3, headY - R * 0.85, R + 2, headY + 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Забрало-козырёк
+    ctx.fillStyle = shade(hc, -0.08);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-R + 1, headY - 2);
+    ctx.quadraticCurveTo(0, headY - 12, R - 1, headY - 2);
+    ctx.quadraticCurveTo(R - 2, headY + 10, 0, headY + 12);
+    ctx.quadraticCurveTo(-R + 2, headY + 10, -R + 1, headY - 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Смотровая щель
+    ctx.fillStyle = '#0e0a07';
+    roundRect(ctx, -R + 3, headY - 2, R * 2 - 6, 4, 2);
+    ctx.fill();
+    // Петли забрала
+    ctx.fillStyle = trim || '#8a95a0';
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.arc(sd * (R - 2), headY + 6, 2.6, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+    });
+    // Бармица: кольчуга по бокам
+    ctx.strokeStyle = shade(hc, -0.34);
+    ctx.lineWidth = 1.2;
+    [-1, 1].forEach(sd => {
+      for (let i = 0; i < 5; i++) {
+        ctx.beginPath();
+        ctx.arc(sd * (R + 1) - sd * (i % 2) * 2, headY + 4 + i * 4, 2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    });
+    ctx.fillStyle = 'rgba(255,255,255,0.36)';
+    ctx.beginPath();
+    ctx.ellipse(-R * 0.4, headY - R * 0.6, 6, 10, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    return true;
+  }
+
+  if (vis === 'sallet') {
+    // Салад: купол с длинным «хвостом» сзади и широким козырьком
+    ctx.fillStyle = metalFill(ctx, hc, headY - R - 8, headY + R);
+    ctx.beginPath();
+    ctx.moveTo(-R - 1, headY - 2);
+    ctx.quadraticCurveTo(-R - 3, headY - R * 0.9, 0, headY - R - 8);
+    ctx.quadraticCurveTo(R + 3, headY - R * 0.9, R + 1, headY - 2);
+    ctx.lineTo(R + 12, headY + 10);
+    ctx.quadraticCurveTo(R - 2, headY + 8, -R - 1, headY + 4);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Козырёк
+    ctx.fillStyle = shade(hc, 0.14);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-R + 1, headY - 3);
+    ctx.quadraticCurveTo(0, headY - 9, R - 2, headY - 3);
+    ctx.lineTo(R + 9, headY + 3);
+    ctx.quadraticCurveTo(0, headY + 1, -R + 1, headY - 3);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Шов и заклёпки
+    ctx.strokeStyle = shade(hc, -0.3);
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.5, headY - R * 0.75);
+    ctx.quadraticCurveTo(0, headY - R * 0.9, R * 0.5, headY - R * 0.75);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.34)';
+    ctx.beginPath();
+    ctx.ellipse(-R * 0.45, headY - R * 0.5, 6, 7, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    return true;
+  }
+
+  if (vis === 'imperialcrown') {
+    // Имперский венец: лавровый венок из листьев + ленты
+    ctx.fillStyle = metalFill(ctx, hc, headY - 30, headY - 6);
+    // Обруч
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3;
+    roundRect(ctx, -R - 1, headY - 16, R * 2 + 2, 8, 3);
+    ctx.fill(); ctx.stroke();
+    // Листья лавра по дуге
+    for (let i = 0; i < 11; i++) {
+      const t = i / 10;
+      const ang = Math.PI * (1.05 + t * 0.9);
+      const lx = Math.cos(ang) * (R + 3);
+      const ly = headY - 6 + Math.sin(ang) * (R * 0.95);
+      ctx.save();
+      ctx.translate(lx, ly);
+      ctx.rotate(ang + Math.PI / 2 + (i % 2 ? 0.5 : -0.5));
+      ctx.fillStyle = i % 2 ? hc : shade(hc, 0.16);
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 2.6, 6, 0, 0, Math.PI * 2);
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+    // Ленты сзади
+    ctx.fillStyle = trim || '#c0392b';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 1.8;
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.moveTo(sd * 4, headY - 10);
+      ctx.quadraticCurveTo(sd * 12, headY + 6, sd * 9, headY + 22);
+      ctx.lineTo(sd * 5, headY + 20);
+      ctx.quadraticCurveTo(sd * 7, headY + 4, sd * 1, headY - 10);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    });
+    return true;
+  }
+
+  if (vis === 'turban') {
+    // Чалма: несколько слоёв ткани витками, узел и свисающий хвост
+    ctx.fillStyle = hc;
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3.4;
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 10, R + 4, R * 0.82, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // Витки
+    for (let i = 0; i < 4; i++) {
+      ctx.strokeStyle = i % 2 ? shade(hc, 0.14) : shade(hc, -0.2);
+      ctx.lineWidth = 3.6;
+      ctx.beginPath();
+      ctx.ellipse(0, headY - 16 + i * 5.4, R + 3 - i * 1.2, R * 0.2, -0.06, Math.PI * 1.02, Math.PI * 1.98);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.6;
+    // Узел справа
+    ctx.fillStyle = shade(hc, 0.1);
+    ctx.beginPath();
+    ctx.ellipse(R * 0.75, headY - 6, 5, 4.4, 0.4, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // Хвост ткани
+    ctx.fillStyle = shade(hc, -0.12);
+    ctx.beginPath();
+    ctx.moveTo(R * 0.8, headY - 2);
+    ctx.quadraticCurveTo(R + 8, headY + 10, R + 2, headY + 20);
+    ctx.lineTo(R - 3, headY + 14);
+    ctx.quadraticCurveTo(R + 1, headY + 6, R * 0.7, headY + 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    return true;
+  }
+
+  if (vis === 'brimhat') {
+    // Шляпа: широкие поля, коническая тулья, шнур с бляхой
+    ctx.fillStyle = shade(hc, -0.08);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3.4;
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 8, R + 17, 8.5, 0, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // Тулья
+    ctx.fillStyle = metalFill(ctx, hc, headY - 34, headY - 4);
+    ctx.beginPath();
+    ctx.moveTo(-R * 0.72, headY - 8);
+    ctx.quadraticCurveTo(-R * 0.6, headY - 30, 0, headY - 32);
+    ctx.quadraticCurveTo(R * 0.6, headY - 30, R * 0.72, headY - 8);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Лента вокруг тульи
+    ctx.fillStyle = trim || shade(hc, -0.35);
+    roundRect(ctx, -R * 0.74, headY - 15, R * 1.48, 5, 2);
+    ctx.fill();
+    // Бляха
+    ctx.fillStyle = '#c9a45c';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(0, headY - 12.5, 2.8, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    // Тень от полей на лице
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 4, R, 6, 0, Math.PI, Math.PI * 2);
+    ctx.fill();
+    return true;
+  }
+
+  if (vis === 'furhat') {
+    // Треух: меховая шапка с наушниками и медной бляхой
+    ctx.fillStyle = metalFill(ctx, hc, headY - 30, headY + 4);
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3.4;
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 8, R + 2, R * 0.86, 0, Math.PI, 0);
+    ctx.lineTo(R + 2, headY + 2);
+    ctx.lineTo(-R - 2, headY + 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Меховая опушка
+    ctx.fillStyle = trim || '#b8a888';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(-R - 4, headY + 1);
+    for (let i = 0; i <= 7; i++) {
+      const px = -R - 4 + ((R * 2 + 8) * i) / 7;
+      ctx.quadraticCurveTo(px + 2, headY + 9, px + 6, headY + 1);
+    }
+    ctx.lineTo(R + 4, headY - 4);
+    ctx.lineTo(-R - 4, headY - 4);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Наушники
+    ctx.fillStyle = shade(hc, -0.12);
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.moveTo(sd * (R - 2), headY + 1);
+      ctx.quadraticCurveTo(sd * (R + 6), headY + 12, sd * (R - 1), headY + 20);
+      ctx.quadraticCurveTo(sd * (R - 6), headY + 10, sd * (R - 5), headY + 1);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    });
+    // Бляха на лбу
+    ctx.fillStyle = '#c9a45c';
+    ctx.beginPath();
+    ctx.arc(0, headY - 6, 3.4, 0, Math.PI * 2);
+    ctx.fill(); ctx.stroke();
+    return true;
+  }
+
+  if (vis === 'barbute') {
+    // Барбют: высокий колокол, Т-образный вырез, без забрала
+    ctx.fillStyle = metalFill(ctx, hc, headY - R - 10, headY + R + 6);
+    ctx.beginPath();
+    ctx.moveTo(-R - 2, headY + 8);
+    ctx.quadraticCurveTo(-R - 3, headY - R * 0.9, 0, headY - R - 8);
+    ctx.quadraticCurveTo(R + 3, headY - R * 0.9, R + 2, headY + 8);
+    ctx.quadraticCurveTo(0, headY + 14, -R - 2, headY + 8);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Т-образный вырез
+    ctx.fillStyle = '#171310';
+    roundRect(ctx, -R + 2, headY - 8, R * 2 - 4, 7, 3);
+    ctx.fill();
+    roundRect(ctx, -3, headY - 8, 6, 20, 3);
+    ctx.fill();
+    // Кромка выреза
+    ctx.strokeStyle = trim || shade(hc, -0.3);
+    ctx.lineWidth = 1.8;
+    roundRect(ctx, -R + 2, headY - 8, R * 2 - 4, 7, 3);
+    ctx.stroke();
+    // Гребень-шов
+    ctx.strokeStyle = shade(hc, -0.26);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, headY - R - 6);
+    ctx.lineTo(0, headY - 10);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.34)';
+    ctx.beginPath();
+    ctx.ellipse(-R * 0.42, headY - R * 0.5, 7, 9, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    return true;
+  }
+
+  if (vis === 'kabuto') {
+    // Кабуто: чаша из пластин, широкий назатыльник, полумесяц на лбу
+    ctx.fillStyle = metalFill(ctx, hc, headY - R - 8, headY + 4);
+    ctx.beginPath();
+    ctx.ellipse(0, headY - 4, R + 2, R * 0.98, 0, Math.PI, 0);
+    ctx.lineTo(R + 2, headY + 2);
+    ctx.lineTo(-R - 2, headY + 2);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Пластины-рёбра купола
+    ctx.strokeStyle = shade(hc, 0.3);
+    ctx.lineWidth = 1.8;
+    [-0.66, -0.33, 0, 0.33, 0.66].forEach(k => {
+      ctx.beginPath();
+      ctx.moveTo(k * (R + 1), headY + 1);
+      ctx.quadraticCurveTo(k * R * 0.8, headY - R * 0.5, 0, headY - R - 1);
+      ctx.stroke();
+    });
+    // Назатыльник: слоистые лаковые полосы
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = i % 2 ? shade(hc, 0.16) : shade(hc, -0.06);
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 2;
+      roundRect(ctx, -R - 6 - i * 2, headY + 2 + i * 5, (R + 6 + i * 2) * 2, 6, 2);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = trim || '#c9a45c';
+      for (let k = -2; k <= 2; k++) {
+        ctx.beginPath();
+        ctx.arc(k * 8, headY + 5 + i * 5, 1.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // Полумесяц (маэдатэ)
+    ctx.fillStyle = trim || '#c9a45c';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-13, headY - R - 6);
+    ctx.quadraticCurveTo(0, headY - R - 20, 13, headY - R - 6);
+    ctx.quadraticCurveTo(0, headY - R - 12, -13, headY - R - 6);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.26)';
+    ctx.beginPath();
+    ctx.ellipse(-R * 0.4, headY - R * 0.55, 6, 7, -0.4, 0, Math.PI * 2);
+    ctx.fill();
+    return true;
+  }
+
+  return false;
+}
+
 function drawHelmet(ctx, helm, headY, headR) {
   const hc = helm.color || '#b0bac4';
   const vis = helm.vis || 'nasal';
   ctx.strokeStyle = OUTLINE;
   ctx.lineWidth = 4;
+
+  // Новые силуэты шлемов живут в отдельной функции
+  if (drawHelmetModel(ctx, vis, helm, headY, headR)) return;
 
   if (vis === 'hood') {
     // Капюшон: ткань складками, с тенью внутри
@@ -1983,7 +4536,13 @@ const ARMOR_TIER_STYLE = {
 };
 
 const METAL_VIS = ['mail', 'chain', 'scale', 'dragon', 'lamellar', 'splint',
-  'plate', 'lorica', 'imperial', 'bronze', 'manica', 'greaves', 'gold', 'bracers', 'medieval', 'rus'];
+  'plate', 'lorica', 'imperial', 'bronze', 'manica', 'greaves', 'gold', 'bracers', 'medieval', 'rus',
+  // Новые модели: металлические силуэты
+  'cuirass', 'bronzemuscle', 'muscleiron', 'gothic', 'lamellariron', 'hauberk',
+  'chainlong', 'brigandine', 'bracers', 'vambrace', 'pauldron', 'goldarm', 'titanarm',
+  'bronzebracer', 'chainsleeve', 'scalearm', 'gladmanica', 'platelegs', 'irongreaves',
+  'goldgreaves', 'imperialgreaves', 'titangreaves', 'chainlegs', 'scalelegs', 'splintlegs', 'samurai',
+  'splintarm', 'lamellararm', 'fauldarm'];
 
 function hex2rgb(hex) {
   if (!hex || hex[0] !== '#') return { r: 140, g: 120, b: 100 };
@@ -2216,7 +4775,7 @@ function drawBodyArmorDetail(ctx, body, shoulder, waist, hipY) {
   ctx.strokeStyle = 'rgba(0,0,0,0.32)';
   ctx.lineWidth = 2.4;
 
-  if (vis === 'mail' || vis === 'chain') {
+  if (vis === 'mail' || vis === 'chain' || vis === 'chainlong' || vis === 'hauberk') {
     // Кольчуга: плетение «в шахматку» с блеском на кольцах
     const step = 7;
     for (let yy = hipY - 46; yy < hipY; yy += step) {
@@ -2246,6 +4805,20 @@ function drawBodyArmorDetail(ctx, body, shoulder, waist, hipY) {
     ctx.quadraticCurveTo(0, hipY - 40, shoulder - 3, hipY - 45);
     ctx.stroke();
     hem(hipY - 4, 4);
+
+    // Хауберк: кольчужный подшлемник-капюшон поверх плеч
+    if (vis === 'hauberk') {
+      ctx.fillStyle = shade(c, 0.05);
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(-shoulder * 0.5, hipY - 44);
+      ctx.quadraticCurveTo(0, hipY - 58, shoulder * 0.5, hipY - 44);
+      ctx.quadraticCurveTo(shoulder * 0.3, hipY - 40, 0, hipY - 42);
+      ctx.quadraticCurveTo(-shoulder * 0.3, hipY - 40, -shoulder * 0.5, hipY - 44);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
   } else if (vis === 'scale' || vis === 'dragon') {
     // Чешуя: набегающие ряды с бликом на каждой чешуйке
     for (let row = 0; row < 6; row++) {
@@ -2275,7 +4848,7 @@ function drawBodyArmorDetail(ctx, body, shoulder, waist, hipY) {
       }
     }
     hem(hipY - 4, 4);
-  } else if (vis === 'lamellar' || vis === 'splint') {
+  } else if (vis === 'lamellar' || vis === 'splint' || vis === 'lamellariron' || vis === 'splintlegs') {
     // Ламелляр: пластины внахлёст, каждая с фаской и заклёпками
     for (let row = 0; row < 6; row++) {
       for (let i = -2; i <= 2; i++) {
@@ -2307,7 +4880,282 @@ function drawBodyArmorDetail(ctx, body, shoulder, waist, hipY) {
     ctx.fill(); ctx.stroke();
     ctx.fillStyle = pal.trim;
     ctx.beginPath(); ctx.arc(0, hipY - 23, 3.6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  } else if (vis === 'plate' || vis === 'lorica' || vis === 'imperial' || vis === 'bronze') {
+  } else if (vis === 'sleeveless') {
+    // Безрукавка: широкие проймы, открытые плечи, V-вырез и шнуровка.
+    // Силуэт уже корпуса — видно голые руки по бокам.
+    const w2 = shoulder * 0.78;
+    ctx.fillStyle = shade(c, -0.06);
+    ctx.beginPath();
+    ctx.moveTo(-w2, hipY - 44);
+    ctx.quadraticCurveTo(-w2 * 0.62, hipY - 47, -w2 * 0.34, hipY - 49);
+    ctx.quadraticCurveTo(0, hipY - 36, w2 * 0.34, hipY - 49);
+    ctx.quadraticCurveTo(w2 * 0.62, hipY - 47, w2, hipY - 44);
+    ctx.quadraticCurveTo(w2 * 0.9, hipY - 26, waist * 0.94, hipY - 2);
+    ctx.quadraticCurveTo(0, hipY + 4, -waist * 0.94, hipY - 2);
+    ctx.quadraticCurveTo(-w2 * 0.9, hipY - 26, -w2, hipY - 44);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Проймы: тёмные дуги у плеч
+    [-1, 1].forEach(sd => {
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(sd * w2 * 0.98, hipY - 42);
+      ctx.quadraticCurveTo(sd * w2 * 0.52, hipY - 40, sd * w2 * 0.4, hipY - 28);
+      ctx.stroke();
+    });
+    // Шнуровка по V-вырезу
+    ctx.strokeStyle = '#e8dcc0';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 3; i++) {
+      const yy = hipY - 42 + i * 5;
+      const sp = 2.2 + i * 1.4;
+      ctx.beginPath();
+      ctx.moveTo(-sp, yy); ctx.lineTo(sp, yy + 3.4);
+      ctx.moveTo(sp, yy); ctx.lineTo(-sp, yy + 3.4);
+      ctx.stroke();
+    }
+    // Ремень
+    ctx.fillStyle = '#5a3f22';
+    ctx.strokeStyle = dark;
+    ctx.lineWidth = 1.6;
+    roundRect(ctx, -waist * 0.96, hipY - 12, waist * 1.92, 5.4, 2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = pal.trim;
+    ctx.beginPath(); ctx.arc(0, hipY - 9.4, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    sheen(-8, hipY - 38, 5, 7, -0.4);
+  } else if (vis === 'poncho') {
+    // Накидка: трапеция с прорезью для головы, свисающие углы и бахрома
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.moveTo(-shoulder * 0.42, hipY - 50);
+    ctx.lineTo(shoulder * 0.42, hipY - 50);
+    ctx.lineTo(shoulder * 1.02, hipY - 6);
+    ctx.quadraticCurveTo(0, hipY + 8, -shoulder * 1.02, hipY - 6);
+    ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // Складки ткани от ворота вниз
+    ctx.strokeStyle = shade(c, -0.3);
+    ctx.lineWidth = 1.8;
+    for (let i = -2; i <= 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * 7, hipY - 46);
+      ctx.quadraticCurveTo(i * 11, hipY - 24, i * 15, hipY - 2);
+      ctx.stroke();
+    }
+    // Ворот-прорезь
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(0, hipY - 48, 7.5, 3.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Кайма по подолу и бахрома
+    ctx.strokeStyle = pal.trim;
+    ctx.lineWidth = 2.4;
+    ctx.beginPath();
+    ctx.moveTo(-shoulder * 1.0, hipY - 7);
+    ctx.quadraticCurveTo(0, hipY + 7, shoulder * 1.0, hipY - 7);
+    ctx.stroke();
+    ctx.strokeStyle = pal.trim;
+    ctx.lineWidth = 1.6;
+    for (let i = -4; i <= 4; i++) {
+      const t = i / 4;
+      const px = t * shoulder * 0.96;
+      const py = hipY + 5 - t * t * 10;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + t * 2, py + 4);
+      ctx.stroke();
+    }
+    // Пряжка на плече
+    ctx.fillStyle = pal.trim;
+    ctx.strokeStyle = dark;
+    ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.arc(-shoulder * 0.34, hipY - 47, 2.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    sheen(6, hipY - 34, 7, 8, -0.3);
+  } else if (vis === 'cuirbouilli') {
+    // Варёная кожа: жёсткие формованные сегменты с глянцем и заклёпками
+    ctx.fillStyle = shade(c, 0.08);
+    roundRect(ctx, -waist, hipY - 48, waist * 2, 46, 7);
+    ctx.fill(); ctx.stroke();
+    // Сегменты: три горизонтальные полосы с фаской
+    for (let i = 0; i < 3; i++) {
+      const yy = hipY - 44 + i * 13;
+      ctx.fillStyle = i % 2 ? shade(c, 0.16) : shade(c, -0.02);
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 1.8;
+      roundRect(ctx, -waist + 3, yy, waist * 2 - 6, 11, 4);
+      ctx.fill(); ctx.stroke();
+      // Глянцевый блик — варёная кожа блестит как лак
+      ctx.fillStyle = `rgba(255,246,220,${0.24 + pal.polish * 0.45})`;
+      roundRect(ctx, -waist + 6, yy + 1.6, (waist * 2 - 12) * 0.45, 2.4, 1.2);
+      ctx.fill();
+      // Заклёпки по краю сегмента
+      ctx.fillStyle = pal.trim;
+      [-0.7, 0.7].forEach(k => {
+        ctx.beginPath();
+        ctx.arc(k * waist * 0.72, yy + 8, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+    // Осевой шов и наплечные ремни
+    ctx.strokeStyle = shade(c, -0.45);
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(0, hipY - 46);
+    ctx.lineTo(0, hipY - 4);
+    ctx.stroke();
+    ctx.fillStyle = '#5a3f22';
+    [-1, 1].forEach(sd => {
+      roundRect(ctx, sd * shoulder * 0.5 - 3.5, hipY - 50, 7, 9, 2.6);
+      ctx.fill();
+    });
+    sheen(-10, hipY - 34, 6, 8, -0.4);
+    hem(hipY - 4, 4);
+  } else if (vis === 'bronzemuscle' || vis === 'muscleiron') {
+    // Мускульный доспех: анатомические выпуклости, выкованные в металле
+    const bronze = vis === 'bronzemuscle';
+    ctx.fillStyle = metalFill(ctx, c, hipY - 52, hipY);
+    roundRect(ctx, -waist, hipY - 48, waist * 2, 46, 8);
+    ctx.fill(); ctx.stroke();
+    // Грудные пластины
+    [-1, 1].forEach(sd => {
+      const g = ctx.createRadialGradient(sd * shoulder * 0.34, hipY - 36, 2, sd * shoulder * 0.34, hipY - 34, 14);
+      g.addColorStop(0, shade(c, 0.4));
+      g.addColorStop(0.6, c);
+      g.addColorStop(1, shade(c, -0.28));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(sd * shoulder * 0.34, hipY - 34, 11.5, 9.5, sd * 0.12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      // Сосок-заклёпка
+      ctx.fillStyle = shade(c, -0.45);
+      ctx.beginPath();
+      ctx.arc(sd * shoulder * 0.34, hipY - 33, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    // Кубики пресса
+    for (let row = 0; row < 2; row++) {
+      for (let k = -1; k <= 1; k += 2) {
+        const g = ctx.createRadialGradient(k * 5, hipY - 18 - row * 9, 1, k * 5, hipY - 18 - row * 9, 8);
+        g.addColorStop(0, shade(c, 0.32));
+        g.addColorStop(1, shade(c, -0.22));
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(k * 5.4, hipY - 18 - row * 9, 5, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // Осевая линия и ключицы
+    ctx.strokeStyle = dark;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(0, hipY - 44);
+    ctx.lineTo(0, hipY - 6);
+    ctx.stroke();
+    ctx.lineWidth = 1.8;
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.moveTo(sd * 2, hipY - 44);
+      ctx.quadraticCurveTo(sd * shoulder * 0.5, hipY - 47, sd * shoulder * 0.86, hipY - 42);
+      ctx.stroke();
+    });
+    // Бронза: тёмный патиновый кант по низу
+    if (bronze) {
+      ctx.strokeStyle = 'rgba(90,120,100,0.55)';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(-waist + 2, hipY - 5);
+      ctx.quadraticCurveTo(0, hipY - 1, waist - 2, hipY - 5);
+      ctx.stroke();
+    }
+    sheen(-12, hipY - 40, 6, 7, -0.4);
+  } else if (vis === 'cuirass') {
+    // Кираса: две цельные створки с осевым ребром, застёжками и вырезом
+    ctx.fillStyle = metalFill(ctx, c, hipY - 52, hipY);
+    roundRect(ctx, -waist, hipY - 48, waist * 2, 46, 9);
+    ctx.fill(); ctx.stroke();
+    // Вырез горловины
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(0, hipY - 47, 9, 3.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Осевое ребро-гребень
+    ctx.strokeStyle = shade(c, 0.45);
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(0, hipY - 43);
+    ctx.quadraticCurveTo(2.5, hipY - 26, 0, hipY - 6);
+    ctx.stroke();
+    ctx.strokeStyle = dark;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(2.6, hipY - 42);
+    ctx.quadraticCurveTo(5, hipY - 26, 2.4, hipY - 8);
+    ctx.stroke();
+    // Боковые грани створок
+    [-1, 1].forEach(sd => {
+      ctx.strokeStyle = dark;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sd * waist * 0.98, hipY - 40);
+      ctx.quadraticCurveTo(sd * waist * 0.8, hipY - 24, sd * waist * 0.9, hipY - 8);
+      ctx.stroke();
+      // Застёжки-крючки по краю
+      ctx.fillStyle = pal.trim;
+      [0.55, 0.8].forEach(k => {
+        ctx.beginPath();
+        ctx.arc(sd * waist * 0.86, hipY - 46 + k * 42, 1.9, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    });
+    sheen(-13, hipY - 38, 7, 10, -0.35);
+    hem(hipY - 4, 4);
+  } else if (vis === 'gothic') {
+    // Готические латы: рифлёная сталь — вертикальные жёлоба и острые грани
+    ctx.fillStyle = metalFill(ctx, c, hipY - 52, hipY);
+    roundRect(ctx, -waist, hipY - 48, waist * 2, 46, 6);
+    ctx.fill(); ctx.stroke();
+    // Жёлоба: чередование светлых рёбер и тёмных канавок
+    for (let i = -4; i <= 4; i++) {
+      const px = i * (waist * 0.22);
+      ctx.strokeStyle = i % 2 ? 'rgba(0,0,0,0.34)' : `rgba(255,255,255,${0.28 + pal.polish * 0.4})`;
+      ctx.lineWidth = i % 2 ? 2.2 : 1.6;
+      ctx.beginPath();
+      ctx.moveTo(px * 0.82, hipY - 46);
+      ctx.quadraticCurveTo(px, hipY - 26, px * 0.9, hipY - 5);
+      ctx.stroke();
+    }
+    // Острые грани на груди: клиновидный вырез
+    ctx.fillStyle = shade(c, -0.4);
+    ctx.beginPath();
+    ctx.moveTo(-8, hipY - 46);
+    ctx.lineTo(0, hipY - 30);
+    ctx.lineTo(8, hipY - 46);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = pal.trim;
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    // Наплечные гребни
+    [-1, 1].forEach(sd => {
+      ctx.fillStyle = shade(c, 0.2);
+      ctx.beginPath();
+      ctx.moveTo(sd * shoulder * 0.7, hipY - 46);
+      ctx.quadraticCurveTo(sd * shoulder * 0.98, hipY - 40, sd * shoulder * 0.86, hipY - 26);
+      ctx.quadraticCurveTo(sd * shoulder * 0.78, hipY - 36, sd * shoulder * 0.7, hipY - 46);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    });
+    sheen(-12, hipY - 40, 5, 9, -0.3);
+    hem(hipY - 4, 4);
+  } else if (vis === 'plate' || vis === 'lorica' || vis === 'imperial' || vis === 'bronze'
+    || vis === 'pauldron' || vis === 'vambrace' || vis === 'goldarm' || vis === 'titanarm'
+    || vis === 'bronzebracer' || vis === 'gladmanica' || vis === 'platelegs'
+    || vis === 'irongreaves' || vis === 'goldgreaves' || vis === 'imperialgreaves'
+    || vis === 'titangreaves' || vis === 'chainlegs' || vis === 'samurai') {
     // Пластинчатая / чешуйчато-ременная: кираса с рёбрами жёсткости.
     // Линии делаем контрастными: на маленьком спрайте полутон пропадает.
     const edge = pal.deep;
@@ -2849,21 +5697,50 @@ function weaponHoldAngle(w, gear, swing) {
   const v = w.vis || WEAPON_VIS[w.shape] || WEAPON_VIS.gladius;
   if (v.head === 'bow') return -0.34 + (swing || 0) * 0.34;
   if (v.head === 'xbow') return 0.28 - (swing || 0) * 0.28;
-  return gear.carry + gear.wpnLag;
+  // carry: 0 — оружие стоит вертикально у плеча, 1 — остриём вперёд.
+  return (Math.PI * 0.5) * gear.carry + gear.wpnLag;
 }
 
 function drawWeapon(ctx, w) {
   const v = w.vis || WEAPON_VIS[w.shape] || WEAPON_VIS.gladius;
-  if (v.dual) {
-    drawWeaponShape(ctx, v, w);
-    ctx.save();
-    ctx.scale(-1, 1);
-    ctx.translate(-12, 0);
-    drawWeaponShape(ctx, v, w);
-    ctx.restore();
-    return;
-  }
+  // Парные наборы («пара топоров», «пара кинжалов») больше НЕ дублируются
+  // внутри одной кисти: второй клинок рисует левая рука. Здесь всегда
+  // один предмет — иначе в руке оказывалось четыре клинка.
   drawWeaponShape(ctx, v, w);
+}
+
+// Точка хвата в локальных координатах модели оружия.
+// Древко идёт от пятки (y≈32) до головки (-len). Рука ложится на обмотку,
+// а пятка и навершие остаются снаружи кулака — иначе кажется, что оружие
+// держат за самый кончик. Длинное древко берётся выше: хват рассчитан
+// на две руки.
+function weaponGripPoint(v) {
+  if (!v) return { x: 8, y: 35 };
+  const hafted = ['axe', 'mace', 'hammer', 'pick', 'spear', 'trident', 'halberd'].includes(v.head);
+  if (!hafted) return { x: 8, y: 35 };
+  return { x: 10, y: (v.len || 50) >= 70 ? 15 : 21 };
+}
+
+// Оружие в кисти: масштаб, поворот и зеркало для левой руки.
+// mirror = 1 — правая рука, -1 — левая (модель отражается, кисть остаётся
+// в той же точке, поэтому рукоять не выезжает из кулака).
+// WEAPON_HAND_SCALE: оружие в руке уменьшено относительно модели, иначе
+// по отношению к телу оно выглядело игрушечно-огромным. Модели при этом
+// остаются крупными в иконках инвентаря, где масштаб свой.
+const WEAPON_HAND_SCALE = 0.74;
+
+function drawWeaponInHand(ctx, weapon, hx, hy, ang, mirror, scale) {
+  const v = weapon.vis || WEAPON_VIS[weapon.shape] || WEAPON_VIS.gladius;
+  const g = weaponGripPoint(v);
+  const k = (scale || 1) * WEAPON_HAND_SCALE;
+  ctx.save();
+  ctx.translate(hx, hy);
+  if (mirror < 0) ctx.scale(-1, 1);
+  ctx.rotate(mirror < 0 ? -ang : ang);
+  ctx.scale(k, k);
+  ctx.translate(-g.x, -g.y);
+  drawWeapon(ctx, weapon);
+  ctx.restore();
 }
 
 // ==================== ДЕТАЛИ ОРУЖИЯ ====================
@@ -3679,7 +6556,8 @@ function drawWeaponShapeBase(ctx, v, w) {
   if (head === 'hammer') {
     const len = v.len;
     const st = weaponStyle(w);
-    const hw = v.huge ? 30 : v.big ? 24 : 20;
+    // Головка уменьшена: в руке она выглядела как кувалда на палке.
+    const hw = v.huge ? 24 : v.big ? 19 : 16;
     const gold = st.tier >= 5;
     const hy = -len - 2;
 
@@ -4237,257 +7115,567 @@ function drawWeaponShapeBase(ctx, v, w) {
 }
 
 // ==================== БОЕВЫЕ ПСЫ ====================
-// Четвероногая анатомия: корпус, четыре лапы с суставами, хвост, голова
-// с пастью. Ходьба — диагональные пары лап, как у настоящей собаки.
+// Пёс нарисован в той же мультяшной манере, что и гладиаторы: крупная
+// голова, толстые лапы с жирным контуром, короткое мощное тело и два тона
+// на объём. Ходьба — диагональные пары лап, как у настоящей собаки.
 function drawBattleDog(ctx, dog, x, y, scale = 1, facing = 1, a = {}) {
   const now = performance.now() / 1000;
   const seed = (dog.id || 'dog').length * 0.61;
   const alive = 1 - (a.dead || 0);
+  const alpha = a.alpha == null ? 1 : a.alpha;
   const colors = dog.colors || { body: '#6b4a2e', belly: '#a98a63', snout: '#4a3320' };
-  const buildW = dog.build === 'heavy' ? 1.18 : dog.build === 'slim' ? 0.86 : 1;
+
+  const breed = dog.breedId || '';
+  const heavy = dog.build === 'heavy';
+  const slim = dog.build === 'slim';
+  const bw = heavy ? 1.14 : slim ? 0.88 : 1;
+  const legW = heavy ? 12 : slim ? 9 : 10.5;
+  const floppyEars = breed === 'molossian' || breed === 'molossian2' || breed === 'pug';
+  const shortSnout = breed === 'pug' || breed === 'molossian' || breed === 'molossian2';
+  const redEyes = breed === 'blackdog';
+  const armored = breed === 'warhound';
+  const dockedTail = breed === 'molossian' || breed === 'molossian2';
 
   const breath = (a.breath == null ? 1 : a.breath) * alive;
-  const breathY = Math.sin(now * 2.3 + seed) * 1.2 * breath;
+  const breathY = Math.sin(now * 2.1 + seed) * 1.5 * breath;
   const walkPhase = a.walkPhase || 0;
   const walk = a.walk || 0;
-  const bob = -Math.abs(Math.sin(walkPhase * 2)) * 1.8 * walk * alive;
+  const bob = -Math.abs(Math.sin(walkPhase)) * 2.4 * walk * alive;
+  const bite = Math.max(a.swing || 0, (a.hurt || 0) * 0.55);
+  const dead = a.dead || 0;
+
+  const bodyCY = -48;
+  const bodyRX = 32 * bw;
+  const bodyRY = 17 * bw;
 
   ctx.save();
-  ctx.globalAlpha = a.alpha == null ? 1 : a.alpha;
+  ctx.globalAlpha = alpha;
 
-  // Тень
+  // --- Тень ---
   ctx.save();
-  ctx.globalAlpha = 0.3 * (a.alpha == null ? 1 : a.alpha);
+  ctx.globalAlpha = 0.3 * alpha;
   ctx.fillStyle = '#0a0705';
   ctx.beginPath();
-  ctx.ellipse(x, y + 3 * scale, 46 * scale, 11 * scale, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y + 3 * scale, 40 * scale, 10 * scale, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  // Аура (босс-пёс не бывает, но подсветка активного — да)
+  // --- Аура активного пса ---
   if (a.glow > 0.01) {
-    const g = ctx.createRadialGradient(x, y - 40 * scale, 4, x, y - 40 * scale, 78 * scale);
+    const g = ctx.createRadialGradient(x, y - 50 * scale, 4, x, y - 50 * scale, 78 * scale);
     g.addColorStop(0, `rgba(255,214,110,${0.26 * a.glow})`);
     g.addColorStop(1, 'rgba(255,214,110,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.ellipse(x, y - 36 * scale, 76 * scale, 70 * scale, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, y - 46 * scale, 70 * scale, 64 * scale, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 
+  // --- Точка опоры ---
   ctx.translate(x, y + (breathY + bob) * scale);
-  if ((a.dead || 0) > 0) {
-    ctx.rotate((a.dead || 0) * 1.4 * facing);
-    ctx.translate(0, (a.dead || 0) * 8);
+  if (dead > 0) {
+    ctx.rotate(dead * 1.45 * facing);
+    ctx.translate(0, dead * 6);
   }
   ctx.rotate((a.dodge || 0) * 0.12 * facing);
+  ctx.translate((a.lunge || 0) * 4, 0);
   ctx.scale(scale * facing, scale);
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
-  const bodyY = -40;
-  const bodyLen = 62 * buildW;
-  const bodyH = 26 * buildW;
-
-  // ---------- Лапы (диагональные пары) ----------
-  const legs = [
-    { x: -bodyLen * 0.34, phase: 0, front: false },
-    { x: -bodyLen * 0.16, phase: Math.PI, front: false },
-    { x: bodyLen * 0.26, phase: Math.PI, front: true },
-    { x: bodyLen * 0.42, phase: 0, front: true }
-  ];
-
-  legs.forEach((L, i) => {
-    const swing = Math.sin(walkPhase + L.phase) * 7 * walk;
-    const lift = Math.max(0, Math.cos(walkPhase + L.phase)) * 6 * walk;
+  // ---------- Лапы ----------
+  const drawLeg = (L) => {
+    const sw = Math.sin(walkPhase + L.phase) * 8 * walk;
+    const lift = Math.max(0, Math.cos(walkPhase + L.phase)) * 7 * walk;
     const topX = L.x;
-    const topY = bodyY + 6;
-    const footX = topX + swing;
-    const footY = -3 - lift;
-    const kneeX = (topX + footX) / 2 + (L.front ? -2.5 : 2.5) - lift * 0.4;
-    const kneeY = (topY + footY) / 2;
+    const topY = bodyCY + bodyRY * 0.35;
+    const footX = L.x + sw;
+    const footY = -2 - lift;
+    const kneeX = L.x + sw * 0.35 + (L.back ? -7 : 7);
+    const kneeY = (topY + footY) * 0.5 - 1;
+    const col = L.far ? shade(colors.body, -0.24) : colors.body;
 
-    // Задняя пара темнее — глубина
-    const legColor = i < 2 ? shade(colors.body, -0.18) : colors.body;
-    limb(ctx, topX, topY, kneeX, kneeY, 8 * buildW, legColor);
-    limb(ctx, kneeX, kneeY, footX, footY, 7 * buildW, legColor);
+    limb(ctx, topX, topY, kneeX, kneeY, legW, col);
+    limb(ctx, kneeX, kneeY, footX, footY, legW * 0.86, col);
 
     // Лапа
-    ctx.fillStyle = shade(colors.snout, 0.05);
+    ctx.fillStyle = L.far ? shade(colors.snout, -0.06) : shade(colors.snout, 0.1);
     ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 2.4;
-    roundRect(ctx, footX - 4, footY - 2, 11, 5.5, 2.5);
-    ctx.fill(); ctx.stroke();
-  });
+    ctx.lineWidth = 2.8;
+    roundRect(ctx, footX - 6, footY - 3.5, 15, 7.5, 3.5);
+    ctx.fill();
+    ctx.stroke();
+
+    // Когти
+    ctx.strokeStyle = shade(colors.snout, -0.45);
+    ctx.lineWidth = 1.6;
+    for (let i = 0; i < 2; i++) {
+      const cx = footX + 4.5 + i * 3;
+      ctx.beginPath();
+      ctx.moveTo(cx, footY - 2.2);
+      ctx.lineTo(cx + 1.6, footY + 1.6);
+      ctx.stroke();
+    }
+  };
+
+  // Диагональные пары: ближние в противофазе друг другу, дальние — наоборот.
+  const legs = [
+    { x: -22 * bw, phase: Math.PI, far: true, back: true },
+    { x: 20 * bw, phase: 0, far: true, back: false },
+    { x: -13 * bw, phase: 0, far: false, back: true },
+    { x: 29 * bw, phase: Math.PI, far: false, back: false }
+  ];
+
+  legs.filter(L => L.far).forEach(drawLeg);
 
   // ---------- Хвост ----------
-  const wag = Math.sin(now * (3 + (a.victory || 0) * 9) + seed) * (6 + (a.victory || 0) * 8);
+  const wag = Math.sin(now * (3 + (a.victory || 0) * 9) + seed) * (7 + (a.victory || 0) * 9);
+  const tailLen = dockedTail ? 0.55 : 1;
+  const tailBaseX = -bodyRX * 0.78;
+  const tailBaseY = bodyCY - bodyRY * 0.55;
+  const tailMidX = -bodyRX * 1.12;
+  const tailMidY = bodyCY - bodyRY * 0.2 + wag * 0.25;
+  const tailTipX = -bodyRX * (1.42 * tailLen + 0.06);
+  const tailTipY = bodyCY - bodyRY * (0.95 * tailLen + 0.1) + wag * 0.6;
+
   ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 10 * buildW;
+  ctx.lineWidth = 11 * bw;
   ctx.beginPath();
-  ctx.moveTo(-bodyLen * 0.5, bodyY + 2);
-  ctx.quadraticCurveTo(-bodyLen * 0.72, bodyY - 6 + wag * 0.4, -bodyLen * 0.66, bodyY - 20 + wag);
+  ctx.moveTo(tailBaseX, tailBaseY);
+  ctx.quadraticCurveTo(tailMidX, tailMidY, tailTipX, tailTipY);
   ctx.stroke();
   ctx.strokeStyle = colors.body;
-  ctx.lineWidth = 7 * buildW;
+  ctx.lineWidth = 7 * bw;
   ctx.beginPath();
-  ctx.moveTo(-bodyLen * 0.5, bodyY + 2);
-  ctx.quadraticCurveTo(-bodyLen * 0.72, bodyY - 6 + wag * 0.4, -bodyLen * 0.66, bodyY - 20 + wag);
+  ctx.moveTo(tailBaseX, tailBaseY);
+  ctx.quadraticCurveTo(tailMidX, tailMidY, tailTipX, tailTipY);
   ctx.stroke();
 
-
-// ---------- Корпус ----------
+  // ---------- Корпус ----------
   ctx.beginPath();
-  ctx.ellipse(-bodyLen * 0.04, bodyY, bodyLen * 0.46, bodyH * 0.62, -0.04, 0, Math.PI * 2);
+  ctx.ellipse(0, bodyCY, bodyRX, bodyRY, -0.05, 0, Math.PI * 2);
   ctx.fillStyle = colors.body;
   ctx.fill();
   ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 3.6;
+  ctx.lineWidth = 4.5;
   ctx.stroke();
 
-  // Живот и грудь светлее
   ctx.save();
   ctx.beginPath();
-  ctx.ellipse(-bodyLen * 0.04, bodyY, bodyLen * 0.46, bodyH * 0.62, -0.04, 0, Math.PI * 2);
+  ctx.ellipse(0, bodyCY, bodyRX, bodyRY, -0.05, 0, Math.PI * 2);
   ctx.clip();
+
+  // Тёмная сторона — зад и низ
+  ctx.fillStyle = shade(colors.body, -0.24);
+  ctx.beginPath();
+  ctx.ellipse(-bodyRX * 0.4, bodyCY + bodyRY * 0.35, bodyRX * 0.78, bodyRY * 0.85, 0.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Светлая грудь и живот
   ctx.fillStyle = colors.belly;
   ctx.beginPath();
-  ctx.ellipse(0, bodyY + bodyH * 0.42, bodyLen * 0.42, bodyH * 0.34, 0, 0, Math.PI * 2);
+  ctx.ellipse(bodyRX * 0.12, bodyCY + bodyRY * 0.66, bodyRX * 0.62, bodyRY * 0.52, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,0.10)';
+
+  // Блик сверху
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
   ctx.beginPath();
-  ctx.ellipse(-bodyLen * 0.1, bodyY - bodyH * 0.34, bodyLen * 0.3, bodyH * 0.16, -0.1, 0, Math.PI * 2);
+  ctx.ellipse(-bodyRX * 0.05, bodyCY - bodyRY * 0.5, bodyRX * 0.5, bodyRY * 0.3, -0.12, 0, Math.PI * 2);
   ctx.fill();
+
   // Шрамы от ран
-  const hpR = dog.hp / Math.max(1, dog.maxHp);
+  const hpR = Math.max(0, Math.min(1, (dog.hp == null ? 1 : dog.hp) / Math.max(1, dog.maxHp || 1)));
   if (hpR < 0.7) {
     ctx.strokeStyle = BLOOD;
-    ctx.lineWidth = 2.2;
-    ctx.globalAlpha = (1 - hpR) * 0.9;
+    ctx.lineWidth = 2.4;
+    ctx.globalAlpha = alpha * (1 - hpR);
     for (let i = 0; i < 3; i++) {
-      const sx = -bodyLen * 0.2 + i * 12;
+      const sx = -bodyRX * 0.35 + i * 11;
       ctx.beginPath();
-      ctx.moveTo(sx, bodyY - 8);
-      ctx.lineTo(sx + 6, bodyY + 6);
+      ctx.moveTo(sx, bodyCY - bodyRY * 0.45);
+      ctx.lineTo(sx + 5, bodyCY + bodyRY * 0.3);
       ctx.stroke();
     }
-    ctx.globalAlpha = a.alpha == null ? 1 : a.alpha;
+    ctx.globalAlpha = alpha;
   }
   ctx.restore();
 
+  // ---------- Попона / нагрудник (снаряжение пса) ----------
+  // Визуал зависит от item.vis: кожа, кольчуга или бронза. У боевого пса
+  // без попоны остаётся его собственный бронзовый нагрудник.
+  const dogGear = (dog.equip && dog.equip.doggear) || null;
+  drawDogGear(ctx, dogGear, { bodyRX, bodyRY, bodyCY, bw, armored, alpha, seed });
+
+  // ---------- Шея ----------
+  const headX = bodyRX * 0.86 + 4;
+  const headY = bodyCY - bodyRY * 1.15;
+  const headR = heavy ? 22 : slim ? 18 : 20;
+
+  limb(ctx, bodyRX * 0.5, bodyCY - bodyRY * 0.35, headX - 6, headY + headR * 0.5, 16 * bw, colors.body);
+
+  // ---------- Ошейник с шипами ----------
+  ctx.save();
+  ctx.translate(headX - 11, headY + headR * 0.82);
+  ctx.rotate(-0.38);
+  ctx.fillStyle = '#7a2f28';
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 3;
+  roundRect(ctx, -9, -6, 20, 12, 4);
+  ctx.fill();
+  ctx.stroke();
+  // Шипы
+  ctx.fillStyle = '#c9a45c';
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 1.6;
+  for (let i = 0; i < 3; i++) {
+    const sx = -6 + i * 6;
+    ctx.beginPath();
+    ctx.moveTo(sx, -6);
+    ctx.lineTo(sx + 3, -11);
+    ctx.lineTo(sx + 6, -6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  // Бляха
+  ctx.fillStyle = '#e5b54f';
+  ctx.beginPath();
+  ctx.arc(0, 5, 3.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
   // ---------- Голова ----------
-  const headX = bodyLen * 0.46;
-  const headY = bodyY - bodyH * 0.5;
-  const lunge = (a.swing || 0) * 4;
+  const emo = a.emotion || (dead > 0.4 ? 'dead' : (a.hurt || 0) > 0.3 ? 'hurt'
+    : (a.victory || 0) > 0.5 ? 'happy' : 'idle');
 
   ctx.save();
-  ctx.translate(headX + lunge, headY + Math.sin(now * 2.3 + seed + 1) * 0.8 * breath);
+  ctx.translate(headX, headY);
+  ctx.rotate(bite * 0.1);
 
-  // Уши — торчком или висячие
-  const earUp = dog.breedId !== 'molossian' && dog.breedId !== 'molossian2';
-  ctx.fillStyle = shade(colors.body, -0.12);
+  // Уши: торчком или висячие лопухи
+  ctx.fillStyle = shade(colors.body, -0.16);
   ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 2.6;
-  [-1, 1].forEach(sd => {
-    ctx.beginPath();
-    if (earUp) {
-      ctx.moveTo(sd * 4, -12);
-      ctx.lineTo(sd * 11, -26);
-      ctx.lineTo(sd * 14, -10);
-    } else {
-      ctx.moveTo(sd * 3, -11);
-      ctx.quadraticCurveTo(sd * 14, -12, sd * 13, 2);
-      ctx.quadraticCurveTo(sd * 8, -2, sd * 4, -8);
-    }
-    ctx.closePath();
-    ctx.fill(); ctx.stroke();
-  });
+  ctx.lineWidth = 3;
+  if (floppyEars) {
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.moveTo(sd * headR * 0.42, -headR * 0.55);
+      ctx.quadraticCurveTo(sd * (headR + 11), -headR * 0.55, sd * (headR + 7), headR * 0.5);
+      ctx.quadraticCurveTo(sd * (headR - 2), headR * 0.25, sd * headR * 0.55, -headR * 0.05);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    });
+  } else {
+    [-1, 1].forEach(sd => {
+      ctx.beginPath();
+      ctx.moveTo(sd * headR * 0.3, -headR * 0.72);
+      ctx.lineTo(sd * headR * 0.88, -headR * 1.78);
+      ctx.lineTo(sd * headR * 1.02, -headR * 0.42);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Внутренняя часть уха
+      ctx.fillStyle = shade(colors.belly, -0.1);
+      ctx.beginPath();
+      ctx.moveTo(sd * headR * 0.46, -headR * 0.7);
+      ctx.lineTo(sd * headR * 0.84, -headR * 1.45);
+      ctx.lineTo(sd * headR * 0.9, -headR * 0.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = shade(colors.body, -0.16);
+    });
+  }
 
   // Череп
   ctx.beginPath();
-  ctx.ellipse(0, 0, 17, 14, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, headR, headR * 0.94, 0, 0, Math.PI * 2);
   ctx.fillStyle = colors.body;
-  ctx.fill(); ctx.stroke();
+  ctx.fill();
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 4;
+  ctx.stroke();
 
-  // Морда
+  ctx.save();
   ctx.beginPath();
-  ctx.moveTo(6, -6);
-  ctx.quadraticCurveTo(26, -6, 28, 2);
-  ctx.quadraticCurveTo(26, 10, 6, 8);
-  ctx.closePath();
+  ctx.ellipse(0, 0, headR, headR * 0.94, 0, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.fillStyle = shade(colors.body, -0.2);
+  ctx.beginPath();
+  ctx.ellipse(-headR * 0.58, headR * 0.18, headR * 0.58, headR * 0.86, 0.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.beginPath();
+  ctx.ellipse(headR * 0.1, -headR * 0.5, headR * 0.42, headR * 0.2, -0.1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // Морда: у молоссов и мопса — приплюснутая, у волкодавов — вытянутая
+  const snoutLen = shortSnout ? 17 : 31;
+  const snoutH = shortSnout ? 16 : 13;
+  const snoutX = headR * 0.52;
+  const snoutY = headR * 0.14;
+
+  ctx.beginPath();
+  roundRect(ctx, snoutX, snoutY - snoutH / 2, snoutLen, snoutH, snoutH * 0.5);
   ctx.fillStyle = colors.snout;
-  ctx.fill(); ctx.stroke();
+  ctx.fill();
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 3.4;
+  ctx.stroke();
+
+  // Верхняя губа светлее
+  ctx.fillStyle = 'rgba(255,255,255,0.08)';
+  ctx.beginPath();
+  ctx.ellipse(snoutX + snoutLen * 0.5, snoutY - snoutH * 0.22, snoutLen * 0.38, snoutH * 0.2, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Нижняя челюсть открывается при укусе
+  ctx.save();
+  ctx.translate(snoutX + 1, snoutY + snoutH * 0.3);
+  ctx.rotate(bite * 0.38);
+  ctx.beginPath();
+  roundRect(ctx, 0, -1, snoutLen * 0.88, 8, 4);
+  ctx.fillStyle = shade(colors.snout, 0.14);
+  ctx.fill();
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.restore();
+
+  // Пасть: тёмная щель и клыки
+  if (bite > 0.12) {
+    ctx.fillStyle = '#5a1a14';
+    ctx.beginPath();
+    ctx.ellipse(snoutX + snoutLen * 0.55, snoutY + snoutH * 0.42,
+      snoutLen * 0.3, 2.2 + bite * 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#f4efe2';
+    ctx.beginPath();
+    ctx.moveTo(snoutX + snoutLen * 0.28, snoutY + snoutH * 0.34);
+    ctx.lineTo(snoutX + snoutLen * 0.36, snoutY + snoutH * 0.34 + 4 + bite * 3);
+    ctx.lineTo(snoutX + snoutLen * 0.44, snoutY + snoutH * 0.34);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(snoutX + snoutLen * 0.62, snoutY + snoutH * 0.34);
+    ctx.lineTo(snoutX + snoutLen * 0.7, snoutY + snoutH * 0.34 + 4 + bite * 3);
+    ctx.lineTo(snoutX + snoutLen * 0.78, snoutY + snoutH * 0.34);
+    ctx.closePath();
+    ctx.fill();
+  }
 
   // Нос
   ctx.fillStyle = '#16110d';
   ctx.beginPath();
-  ctx.ellipse(26, 1, 4.2, 3.2, 0, 0, Math.PI * 2);
+  ctx.ellipse(snoutX + snoutLen - 1.5, snoutY - 1, 5.4, 4.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(snoutX + snoutLen - 3.4, snoutY - 2.4, 1.6, 1.1, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Пасть: открывается при укусе
-  const bite = Math.max(a.swing || 0, (a.hurt || 0) * 0.5);
-  ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 2.2;
-  ctx.beginPath();
-  ctx.moveTo(9, 6);
-  ctx.quadraticCurveTo(18, 8 + bite * 8, 26, 5);
-  ctx.stroke();
-  if (bite > 0.15) {
-    ctx.fillStyle = '#5a1a14';
-    ctx.beginPath();
-    ctx.ellipse(18, 7 + bite * 3, 8, 2 + bite * 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#f4efe2';
-    ctx.beginPath();
-    ctx.moveTo(12, 6); ctx.lineTo(14, 10); ctx.lineTo(16, 6);
-    ctx.moveTo(20, 6); ctx.lineTo(22, 10); ctx.lineTo(24, 6);
-    ctx.fill();
-  }
-
-  // Глаз
-  const emo = a.emotion || 'idle';
-  ctx.fillStyle = '#fffdf6';
-  ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.ellipse(7, -4, 4.4, emo === 'angry' ? 3.2 : 4, 0, 0, Math.PI * 2);
-  ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#20180f';
-  ctx.beginPath();
-  ctx.arc(8.4, -4, 2.1, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Бровь-рык
-  if (emo === 'angry' || (a.swing || 0) > 0.3) {
+  // Язык при радости
+  if (emo === 'happy') {
+    ctx.fillStyle = '#c9645c';
     ctx.strokeStyle = OUTLINE;
-    ctx.lineWidth = 2.6;
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(2, -10);
-    ctx.lineTo(12, -7);
+    ctx.ellipse(snoutX + snoutLen * 0.62, snoutY + snoutH * 0.55,
+      snoutLen * 0.16, 4.4 + Math.sin(now * 7 + seed) * 0.8, 0.1, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
   }
 
-  // Ошейник
-  ctx.fillStyle = '#7a2f28';
-  ctx.strokeStyle = OUTLINE;
-  ctx.lineWidth = 2.2;
-  roundRect(ctx, -16, 6, 8, 14, 3);
-  ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#c9a45c';
-  ctx.beginPath();
-  ctx.arc(-12, 21, 3, 0, Math.PI * 2);
-  ctx.fill();
+  // Глаз
+  const eyeX = headR * 0.26;
+  const eyeY = -headR * 0.24;
+  if (emo === 'dead') {
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.moveTo(eyeX - 5, eyeY - 5);
+    ctx.lineTo(eyeX + 5, eyeY + 5);
+    ctx.moveTo(eyeX + 5, eyeY - 5);
+    ctx.lineTo(eyeX - 5, eyeY + 5);
+    ctx.stroke();
+  } else {
+    const eyeH = emo === 'angry' ? 5.2 : emo === 'hurt' ? 5.6 : 6.4;
+    ctx.fillStyle = '#fffdf6';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    ctx.ellipse(eyeX, eyeY, 6.4, eyeH, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = redEyes ? '#b3261e' : '#20180f';
+    ctx.beginPath();
+    ctx.arc(eyeX + 1.6, eyeY + 0.4, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.arc(eyeX + 0.6, eyeY - 1.2, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Бровь-рык
+  if (emo === 'angry' || bite > 0.3) {
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 3.2;
+    ctx.beginPath();
+    ctx.moveTo(eyeX - 7, eyeY - 9);
+    ctx.lineTo(eyeX + 7, eyeY - 5);
+    ctx.stroke();
+  }
 
   ctx.restore();
 
-  // Вспышка урона
+  // ---------- Ближние лапы поверх корпуса ----------
+  legs.filter(L => !L.far).forEach(drawLeg);
+
+  // ---------- Вспышка урона ----------
   if ((a.hurt || 0) > 0.01) {
-    ctx.globalAlpha = (a.hurt || 0) * 0.4;
+    ctx.globalAlpha = alpha * (a.hurt || 0) * 0.4;
     ctx.fillStyle = '#ff3b30';
     ctx.beginPath();
-    ctx.ellipse(0, bodyY, bodyLen * 0.6, bodyH * 0.9, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, bodyCY, bodyRX * 1.05, bodyRY * 2.1, 0, 0, Math.PI * 2);
     ctx.fill();
   }
+
+  ctx.restore();
+}
+
+
+// Попона или нагрудник пса. Три разных силуэта, чтобы на песке сразу
+// было видно, что именно куплено в кузнице.
+function drawDogGear(ctx, item, g) {
+  const { bodyRX, bodyRY, bodyCY, bw } = g;
+
+  // Своего нагрудника у боевого пса нет — он «встроен» в породу
+  if (!item) {
+    if (g.armored) drawDogBarding(ctx, bodyRX, bodyRY, bodyCY, '#9a7a44', 'plain', bw);
+    return;
+  }
+
+  const vis = item.vis || 'leather';
+  if (vis === 'mail') drawDogBarding(ctx, bodyRX, bodyRY, bodyCY, item.color || '#8d99a4', 'mail', bw);
+  else if (vis === 'bronze') drawDogBarding(ctx, bodyRX, bodyRY, bodyCY, item.color || '#b08f43', 'bronze', bw);
+  else drawDogBarding(ctx, bodyRX, bodyRY, bodyCY, item.color || '#7a5230', 'leather', bw);
+}
+
+// Общая геометрия: «седло» на спине, заходящее на бока и грудь
+function drawDogBarding(ctx, bodyRX, bodyRY, bodyCY, color, style, bw) {
+  ctx.save();
+
+  // Полотно попоны: от холки до крупа, с вырезом под лапы
+  ctx.beginPath();
+  ctx.moveTo(-bodyRX * 0.92, bodyCY - bodyRY * 0.2);
+  ctx.quadraticCurveTo(-bodyRX * 0.7, bodyCY - bodyRY * 1.12, 0, bodyCY - bodyRY * 1.18);
+  ctx.quadraticCurveTo(bodyRX * 0.72, bodyCY - bodyRY * 1.12, bodyRX * 0.86, bodyCY - bodyRY * 0.05);
+  ctx.quadraticCurveTo(bodyRX * 0.66, bodyCY + bodyRY * 1.0, 0, bodyCY + bodyRY * 1.06);
+  ctx.quadraticCurveTo(-bodyRX * 0.7, bodyCY + bodyRY * 1.0, -bodyRX * 0.92, bodyCY - bodyRY * 0.2);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  ctx.save();
+  ctx.clip();
+
+  if (style === 'mail') {
+    // Кольчужное плетение: сетка мелких колец
+    ctx.strokeStyle = shade(color, -0.35);
+    ctx.lineWidth = 1.2;
+    const step = 4.2;
+    for (let row = -3; row < 12; row++) {
+      for (let col = -9; col < 10; col++) {
+        const cx = col * step + (row % 2 ? step / 2 : 0);
+        const cy = bodyCY - bodyRY * 1.1 + row * step;
+        ctx.beginPath();
+        ctx.arc(cx, cy, step * 0.42, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.beginPath();
+    ctx.ellipse(-bodyRX * 0.1, bodyCY - bodyRY * 0.55, bodyRX * 0.5, bodyRY * 0.34, -0.1, 0, Math.PI * 2);
+    ctx.fill();
+    // Ремни, стягивающие кольчугу
+    ctx.fillStyle = shade(color, -0.5);
+    ctx.fillRect(-bodyRX * 0.5, bodyCY - bodyRY * 1.1, 5, bodyRY * 2.2);
+    ctx.fillRect(bodyRX * 0.32, bodyCY - bodyRY * 1.1, 5, bodyRY * 2.2);
+  } else if (style === 'bronze') {
+    // Чеканные пластины и шипы
+    ctx.fillStyle = shade(color, -0.22);
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.ellipse(-bodyRX * 0.5 + i * bodyRX * 0.45, bodyCY + bodyRY * 0.15,
+        bodyRX * 0.22, bodyRY * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(255,236,180,0.45)';
+    ctx.beginPath();
+    ctx.ellipse(-bodyRX * 0.15, bodyCY - bodyRY * 0.62, bodyRX * 0.42, bodyRY * 0.26, -0.12, 0, Math.PI * 2);
+    ctx.fill();
+    // Заклёпки по канту
+    ctx.fillStyle = '#e5b54f';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 1.6;
+    for (let i = -3; i <= 3; i++) {
+      const px = i * bodyRX * 0.26;
+      const py = bodyCY - bodyRY * (1.02 - Math.abs(i) * 0.07);
+      ctx.beginPath();
+      ctx.arc(px, py, 2.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else {
+    // Кожа: прошивка по краю и потёртости
+    ctx.strokeStyle = shade(color, -0.42);
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(-bodyRX * 0.8, bodyCY - bodyRY * 0.25);
+    ctx.quadraticCurveTo(-bodyRX * 0.6, bodyCY - bodyRY * 0.95, 0, bodyCY - bodyRY * 1.0);
+    ctx.quadraticCurveTo(bodyRX * 0.62, bodyCY - bodyRY * 0.95, bodyRX * 0.74, bodyCY - bodyRY * 0.1);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(0,0,0,0.16)';
+    ctx.beginPath();
+    ctx.ellipse(bodyRX * 0.3, bodyCY + bodyRY * 0.4, bodyRX * 0.3, bodyRY * 0.3, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Шипы на бронзе — поверх полотна, чтобы читались силуэтом
+  if (style === 'bronze') {
+    ctx.fillStyle = '#cfd8e0';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2;
+    [-0.55, 0, 0.55].forEach(k => {
+      const sx = bodyRX * k;
+      const sy = bodyCY - bodyRY * 0.95;
+      ctx.beginPath();
+      ctx.moveTo(sx - 4, sy);
+      ctx.lineTo(sx, sy - 9);
+      ctx.lineTo(sx + 4, sy);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
+
+  // Нагрудная пластина у всех вариантов — прикрывает грудь от клыков
+  ctx.beginPath();
+  ctx.ellipse(bodyRX * 0.72, bodyCY + bodyRY * 0.18, bodyRX * 0.22, bodyRY * 0.72, -0.16, 0, Math.PI * 2);
+  ctx.fillStyle = shade(color, style === 'leather' ? 0.06 : 0.1);
+  ctx.fill();
+  ctx.strokeStyle = OUTLINE;
+  ctx.lineWidth = 3.2;
+  ctx.stroke();
 
   ctx.restore();
 }
@@ -4521,7 +7709,7 @@ function weaponIconBounds(v) {
     y0 = -len - reach;
     y1 = 34;
   } else if (head === 'hammer') {
-    const hw = v.huge ? 30 : v.big ? 24 : 20;
+    const hw = v.huge ? 24 : v.big ? 19 : 16;
     x0 = 13 - hw;
     x1 = 13 + hw;
     y0 = -len - 16;
@@ -4593,12 +7781,26 @@ function drawItemIcon(ctx, item, x, y, size) {
     ctx.scale(sc, sc);
     ctx.translate(0, 18);
     const shoulder = 34, waist = 24, hipY = 10;
+    // У части моделей силуэт другой: безрукавка уже, накидка шире и мягче.
+    const narrow = item.vis === 'sleeveless';
+    const wide = item.vis === 'poncho';
+    const sw = shoulder * (narrow ? 0.78 : wide ? 1.02 : 1);
+    const ww = waist * (narrow ? 0.94 : 1);
+    const topY = hipY - (wide ? 52 : 58);
     ctx.beginPath();
-    ctx.moveTo(-waist, hipY);
-    ctx.quadraticCurveTo(-shoulder * 1.3, hipY - 40, -shoulder, hipY - 58);
-    ctx.quadraticCurveTo(0, hipY - 66, shoulder, hipY - 58);
-    ctx.quadraticCurveTo(shoulder * 1.3, hipY - 40, waist, hipY);
-    ctx.quadraticCurveTo(0, hipY + 6, -waist, hipY);
+    ctx.moveTo(-ww, hipY);
+    ctx.quadraticCurveTo(-sw * 1.3, hipY - 40, -sw, topY);
+    if (wide) {
+      ctx.lineTo(-sw * 0.42, topY - 2);
+      ctx.lineTo(-sw * 0.34, topY + 4);
+      ctx.lineTo(sw * 0.34, topY + 4);
+      ctx.lineTo(sw * 0.42, topY - 2);
+      ctx.lineTo(sw, topY);
+    } else {
+      ctx.quadraticCurveTo(0, topY - 8, sw, topY);
+    }
+    ctx.quadraticCurveTo(sw * 1.3, hipY - 40, ww, hipY);
+    ctx.quadraticCurveTo(0, hipY + (wide ? 8 : 6), -ww, hipY);
     ctx.closePath();
     ctx.fillStyle = item.color;
     ctx.fill();
@@ -4607,8 +7809,17 @@ function drawItemIcon(ctx, item, x, y, size) {
     ctx.stroke();
     ctx.save();
     ctx.clip();
-    drawBodyArmorDetail(ctx, item, shoulder, waist, hipY);
+    drawBodyArmorDetail(ctx, item, sw, ww, hipY);
     ctx.restore();
+    // Накидка и безрукавка: открытые плечи/углы рисуем поверх клипа
+    if (narrow) {
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      [-1, 1].forEach(sd => {
+        ctx.beginPath();
+        ctx.ellipse(sd * sw * 0.98, topY + 8, 5, 9, sd * 0.2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
   } else if (item.slot === 'arms') {
     const sc = size / 90;
     ctx.scale(sc, sc);
@@ -4619,10 +7830,9 @@ function drawItemIcon(ctx, item, x, y, size) {
     ctx.lineWidth = 3;
     roundRect(ctx, -8, -16, 26, 12, 4);
     ctx.fill(); ctx.stroke();
-    // Новые школы: показываем фактуру наручей на иконке
-    if (['medieval', 'china', 'rus', 'mongol'].includes(item.vis)) {
-      drawArmSchoolDetail(ctx, item, 6, -4);
-    }
+    // Показываем фактуру наручей на иконке (функция сама отсеивает
+    // стили без собственной модели)
+    drawArmSchoolDetail(ctx, item, 6, -4);
   } else if (item.slot === 'legs') {
     const sc = size / 100;
     ctx.scale(sc, sc);
@@ -4661,8 +7871,171 @@ function drawItemIcon(ctx, item, x, y, size) {
         ctx.fillStyle = '#b8a888';
         roundRect(ctx, sd * 16 - 12, -6, 24, 6, 3);
         ctx.fill();
+      } else if (item.vis === 'puttees' || item.vis === 'legwraps') {
+        // Обмотки: косые витки ткани по голени
+        ctx.strokeStyle = shade(item.color, -0.32);
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 5; i++) {
+          const yy = -18 + i * 7;
+          ctx.beginPath();
+          ctx.moveTo(sd * 16 - 12, yy);
+          ctx.lineTo(sd * 16 + 12, yy + 4);
+          ctx.stroke();
+        }
+      } else if (item.vis === 'gaiters' || item.vis === 'hidegreaves') {
+        // Гетры/кожаные поножи: пряжки и прошивка
+        ctx.fillStyle = item.trim || '#8a6a3a';
+        for (let i = 0; i < 3; i++) {
+          roundRect(ctx, sd * 16 - 10, -17 + i * 9, 20, 3.6, 1.6);
+          ctx.fill();
+        }
+        ctx.strokeStyle = shade(item.color, -0.4);
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(sd * 16, -20); ctx.lineTo(sd * 16, 10);
+        ctx.stroke();
+      } else if (item.vis === 'baggy') {
+        // Шаровары: свободная штанина с подвязкой
+        ctx.fillStyle = shade(item.color, 0.1);
+        roundRect(ctx, sd * 16 - 14, -20, 28, 26, 9);
+        ctx.fill();
+        ctx.fillStyle = shade(item.color, -0.45);
+        roundRect(ctx, sd * 16 - 13, 4, 26, 5, 2);
+        ctx.fill();
+      } else if (item.vis === 'splintlegs') {
+        // Шинные наголенники: продольные полосы стали
+        for (let i = -1; i <= 1; i++) {
+          ctx.fillStyle = i ? shade(item.color, 0.14) : shade(item.color, 0.28);
+          roundRect(ctx, sd * 16 - 10, -18 + (i + 1) * 8, 20, 5.4, 2);
+          ctx.fill();
+        }
+      } else if (item.vis === 'samurai') {
+        // Лаковые пластины, шнуровка золотом
+        for (let i = 0; i < 3; i++) {
+          ctx.fillStyle = i % 2 ? shade(item.color, 0.16) : shade(item.color, -0.06);
+          roundRect(ctx, sd * 16 - 11, -18 + i * 9, 22, 7.4, 2);
+          ctx.fill();
+        }
+        ctx.strokeStyle = item.trim || '#c9a45c';
+        ctx.lineWidth = 1.4;
+        for (let i = 0; i < 3; i++) {
+          ctx.beginPath();
+          ctx.moveTo(sd * 16 - 8 + i * 8, -18);
+          ctx.lineTo(sd * 16 - 6 + i * 8, 8);
+          ctx.stroke();
+        }
+      } else if (item.vis === 'platelegs' || item.vis === 'irongreaves'
+        || item.vis === 'goldgreaves' || item.vis === 'imperialgreaves'
+        || item.vis === 'titangreaves' || item.vis === 'greaves') {
+        // Кованая створка: фаска и наколенник
+        ctx.fillStyle = 'rgba(255,255,255,0.34)';
+        roundRect(ctx, sd * 16 - 9, -18, 7, 24, 3);
+        ctx.fill();
+        ctx.fillStyle = shade(item.color, 0.3);
+        ctx.strokeStyle = OUTLINE;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sd * 16, -20, 6.4, 0, Math.PI * 2);
+        ctx.fill(); ctx.stroke();
+      } else if (item.vis === 'chainlegs' || item.vis === 'scalelegs') {
+        // Кольчуга/чешуя: мелкая рябь по голени
+        ctx.strokeStyle = shade(item.color, -0.38);
+        ctx.lineWidth = 1.2;
+        for (let row = 0; row < 5; row++) {
+          for (let k = 0; k < 3; k++) {
+            ctx.beginPath();
+            ctx.arc(sd * 16 - 7 + k * 7 + (row % 2 ? 3 : 0), -16 + row * 5.4, 2.2, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
       }
     });
+  } else if (item.slot === 'doggear') {
+    // Иконка попоны: полотно в профиль, накинутое на спину — так силуэт
+    // читается сразу, а фактура (кожа/кольчуга/бронза) видна вблизи.
+    const sc = size / 74;
+    ctx.scale(sc, sc);
+    const color = item.color || '#7a5230';
+
+    // Полотно: дуга по спине с двумя свесами по бокам
+    ctx.beginPath();
+    ctx.moveTo(-40, 6);
+    ctx.quadraticCurveTo(-34, -26, 0, -30);
+    ctx.quadraticCurveTo(34, -26, 40, 6);
+    ctx.quadraticCurveTo(30, 24, 14, 22);
+    ctx.quadraticCurveTo(0, 12, -14, 22);
+    ctx.quadraticCurveTo(-30, 24, -40, 6);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 4.5;
+    ctx.stroke();
+
+    ctx.save();
+    ctx.clip();
+    if (item.vis === 'mail') {
+      ctx.strokeStyle = shade(color, -0.4);
+      ctx.lineWidth = 1.3;
+      for (let row = -6; row < 8; row++) {
+        for (let col = -8; col < 9; col++) {
+          ctx.beginPath();
+          ctx.arc(col * 9 + (row % 2 ? 4.5 : 0), row * 9 - 8, 3.8, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    } else if (item.vis === 'bronze') {
+      // Чеканные пластины с продольными рёбрами
+      ctx.strokeStyle = shade(color, -0.32);
+      ctx.lineWidth = 3;
+      for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * 14, -30);
+        ctx.lineTo(i * 14, 26);
+        ctx.stroke();
+      }
+      ctx.fillStyle = 'rgba(255,236,180,0.5)';
+      ctx.beginPath();
+      ctx.ellipse(-8, -20, 20, 7, -0.12, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = shade(color, -0.45);
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(-34, 2);
+      ctx.quadraticCurveTo(-28, -20, 0, -24);
+      ctx.quadraticCurveTo(28, -20, 34, 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+
+    // Поперечные ремни и пряжка — узнаваемая деталь упряжи
+    ctx.fillStyle = shade(color, -0.5);
+    ctx.fillRect(-3, -30, 6, 54);
+    ctx.fillStyle = '#e5b54f';
+    ctx.strokeStyle = OUTLINE;
+    ctx.lineWidth = 2;
+    roundRect(ctx, -8, -4, 16, 13, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    // Шипы бронзового нагрудника
+    if (item.vis === 'bronze') {
+      ctx.fillStyle = '#cfd8e0';
+      ctx.strokeStyle = OUTLINE;
+      ctx.lineWidth = 2;
+      [-24, 24].forEach(sx => {
+        ctx.beginPath();
+        ctx.moveTo(sx - 5, -24);
+        ctx.lineTo(sx, -36);
+        ctx.lineTo(sx + 5, -24);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      });
+    }
   }
 
   ctx.restore();

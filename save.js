@@ -60,7 +60,7 @@ const Save = (() => {
       dogs: S.dogs || [],
       kennelStock: S.kennelStock || [],
       selectedGladId: S.selectedGladId,
-      modeSel: S.modeSel || 'manual',
+      modeSel: S.modeSel || 'auto',
       shopTab: S.shopTab || 'weapon',
       shopCat: S.shopCat || 'sword',
       armorCat: S.armorCat || 'offhand',
@@ -74,7 +74,9 @@ const Save = (() => {
       lastEventBattle: S.lastEventBattle,
       eventHistory: (typeof EVENTS_RUNTIME !== 'undefined') ? (EVENTS_RUNTIME.history || []) : [],
       goalsCollapsed: !!S.goalsCollapsed,
-      gameOver: !!S.gameOver
+      gameOver: !!S.gameOver,
+      regenAt: S.regenAt || 0,
+      regen: S.regen || {}
     };
   }
 
@@ -95,7 +97,7 @@ const Save = (() => {
     S.dogs = Array.isArray(data.dogs) ? data.dogs : [];
     S.kennelStock = Array.isArray(data.kennelStock) ? data.kennelStock : [];
     S.selectedGladId = data.selectedGladId || null;
-    S.modeSel = data.modeSel || 'manual';
+    S.modeSel = data.modeSel || 'auto';
     S.shopTab = data.shopTab || 'weapon';
     S.shopCat = data.shopCat || 'sword';
     S.armorCat = data.armorCat || 'offhand';
@@ -110,6 +112,7 @@ const Save = (() => {
     S.lastEventBattle = data.lastEventBattle == null ? undefined : Number(data.lastEventBattle);
     S.goalsCollapsed = !!data.goalsCollapsed;
     S.gameOver = !!data.gameOver;
+    S.regen = (data.regen && typeof data.regen === 'object') ? data.regen : {};
 
     if (typeof EVENTS_RUNTIME !== 'undefined') {
       EVENTS_RUNTIME.history = Array.isArray(data.eventHistory) ? data.eventHistory : [];
@@ -126,9 +129,19 @@ const Save = (() => {
     S.dogs.forEach(d => {
       if (typeof ensureLimbs === 'function') ensureLimbs(d);
       if (!d.equip) d.equip = { weapon: null, offhand: null, head: null, body: null, arms: null, legs: null };
+      // В старых сейвах у псов не было ячейки под попону
+      if (d.equip.doggear === undefined) d.equip.doggear = null;
       d.isDog = true;
       d.aiRole = 'melee';
     });
+
+    // Офлайн-регенерация: пока игра была закрыта, бойцы тоже заживали.
+    // Засчитываем прошедшее время, но не больше полного цикла (10 мин).
+    if (typeof applyRegen === 'function' && data.savedAt) {
+      const elapsed = Date.now() - Number(data.savedAt);
+      if (elapsed > 0) applyRegen(Math.min(elapsed, 10 * 60 * 1000));
+    }
+    S.regenAt = Date.now();
     return true;
   }
 
