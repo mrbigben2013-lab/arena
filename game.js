@@ -15,7 +15,7 @@ const STATE = {
   invFilter: 'all',
   squad: [],
   currentLocation: 'city',
-  modeSel: 'manual',
+  modeSel: 'auto',
   shopTab: 'weapon',
   shopCat: 'sword',
   armorCat: 'offhand',
@@ -27,7 +27,10 @@ const STATE = {
   battleCount: 0,
   lastEventBattle: undefined,
   goalsCollapsed: false,
-  gameOver: false
+  gameOver: false,
+  // Пассивная регенерация: время (ms) последнего тика и накопленный прогресс
+  regenAt: 0,
+  regen: {}
 };
 
 const MAX_ROSTER = 12;   // владеть можно 12 гладиаторами
@@ -57,7 +60,7 @@ function blankState() {
     invFilter: 'all',
     squad: [],
     currentLocation: 'city',
-    modeSel: 'manual',
+    modeSel: 'auto',
     shopTab: 'weapon',
     shopCat: 'sword',
     armorCat: 'offhand',
@@ -69,7 +72,9 @@ function blankState() {
     battleCount: 0,
     lastEventBattle: undefined,
     gameOver: false,
-    training: {}
+    training: {},
+    regenAt: 0,
+    regen: {}
   };
 }
 
@@ -126,6 +131,7 @@ function createGladiator(customBg = null, forcedRole = null, gender = null) {
     skinColor: pick(SKIN_TONES).color,
     hairColor: bg.hair,
     hairStyle: pick(HAIR_STYLES).id,
+    ...randomFaceLook(),
     beardStyle: g === 'female' ? 'none' : (bg.beard ? 'full' : pick(['stubble', 'none'])),
     aiRole: forcedRole || cls.role,
     equip: { weapon: null, offhand: null, head: null, body: null, arms: null, legs: null }
@@ -161,6 +167,18 @@ function buildHeroFromCreator() {
   hero.skinColor = document.getElementById('cr-skin').value;
   hero.hairColor = document.getElementById('cr-hair-color').value;
   hero.hairStyle = document.getElementById('cr-hair-style').value;
+  // Лицо собирается из пяти независимых наборов: форма черепа, глаза,
+  // нос, брови и рот. Раньше менялся только овал — при одинаковой форме
+  // лица все герои выглядели близнецами.
+  const faceVal = (id, fallback) => {
+    const el = document.getElementById(id);
+    return el && el.value ? el.value : fallback;
+  };
+  hero.faceStyle = faceVal('cr-face', 'classic');
+  hero.eyeStyle = faceVal('cr-eyes', 'calm');
+  hero.noseStyle = faceVal('cr-nose', 'straight');
+  hero.browStyle = faceVal('cr-brows', 'natural');
+  hero.mouthStyle = faceVal('cr-mouth', 'neutral');
   hero.beardStyle = gender === 'female' ? 'none' : document.getElementById('cr-beard').value;
 
   const weapon = itemById(document.getElementById('cr-weapon').value);
@@ -190,12 +208,37 @@ function updateCreatorPreview() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const hero = buildHeroFromCreator();
-  drawBattleBrother(ctx, hero, canvas.width / 2, canvas.height - 62, 1.22, 1, {});
+  // Фигура рисуется от стоп вверх примерно на 170 единиц. Масштаб
+  // подбираем от высоты холста, а не фиксированным числом: иначе
+  // голова уезжала за верхнюю границу превью.
+  const figureH = 172;
+  const scale = (canvas.height - 54) / figureH;
+  drawBattleBrother(ctx, hero, canvas.width / 2, canvas.height - 16, scale, 1, {});
+
+  // Крупный портрет в углу: форму лица на фигуре целиком не разглядеть,
+  // а выбирать её вслепую бессмысленно.
+  const bx = 10, by = 10, bw = 92, bh = 100;
+  ctx.save();
+  roundRect(ctx, bx, by, bw, bh, 8);
+  ctx.fillStyle = 'rgba(20,15,11,0.82)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(229,181,79,0.45)';
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.clip();
+  ctx.save();
+  ctx.translate(bx + bw / 2, by + bh / 2 + 2);
+  const faceScale = 1.62;
+  ctx.scale(faceScale, faceScale);
+  drawHead(ctx, hero, 0, 26.5, hero.skinColor || '#f0b183',
+    shade(hero.skinColor || '#f0b183', -0.2), hero.gender === 'female', {}, null);
+  ctx.restore();
+  ctx.restore();
 
   ctx.fillStyle = '#e5b54f';
-  ctx.font = 'bold 13px "Segoe UI", sans-serif';
+  ctx.font = 'bold 12px "Segoe UI", sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText(hero.name.slice(0, 22), canvas.width / 2, 20);
+  ctx.fillText(hero.name.slice(0, 24), canvas.width / 2 + 24, canvas.height - 4);
 
   const female = hero.gender === 'female';
   const beardEl = document.getElementById('cr-beard');
@@ -210,7 +253,8 @@ function randomizeCreator() {
   document.getElementById('cr-skin').value = pick(SKIN_TONES).color;
   document.getElementById('cr-hair-color').value = pick(HAIR_COLORS).color;
   document.getElementById('cr-hair-style').value = pick(HAIR_STYLES).id;
-  document.getElementById('cr-beard').value = gender === 'female' ? 'none' : pick(['none', 'stubble', 'full', 'long', 'moustache', 'goatee']);
+  document.getElementById('cr-face').value = pick(FACE_STYLES).id;
+  document.getElementById('cr-beard').value = gender === 'female' ? 'none' : pick(BEARD_STYLES).id;
   updateCreatorPreview();
 }
 
@@ -1471,20 +1515,22 @@ const CITY_ZONES = {
 // Маршруты — ломаные в долях от размера холста, чтобы бойцы
 // не заходили на крыши и стены домов.
 const CITY_PATHS = {
-  // Мостовая: широкая полоса от рынка до арены, три боковые дорожки
+  // Мостовая: чистая полоса брусчатки правее клумбы и телеги, левее
+  // оранжевых навесов рынка. Верх обрываем ниже навесов, чтобы боец
+  // не уходил за прилавки и стену арены.
   street: [
-    [0.250, 0.985], [0.290, 0.920], [0.330, 0.855],
-    [0.380, 0.790], [0.430, 0.730], [0.470, 0.670]
+    [0.470, 0.958], [0.486, 0.896], [0.504, 0.836],
+    [0.516, 0.782], [0.525, 0.742]
   ],
-  // Ступени храма: от площадки до верха лестницы
+  // Каменные ступени у таверны (между таверной и рынком) — в рабочей
+  // зоне глубины y≥0.62. Лестница храма лежит слишком высоко (мелкие
+  // бойцы уходили за колонны/кусты), поэтому ведём отряд здесь.
   stairs: [
-    [0.180, 0.590], [0.200, 0.560], [0.230, 0.530],
-    [0.260, 0.500], [0.285, 0.470], [0.310, 0.448]
+    [0.315, 0.815], [0.300, 0.765], [0.290, 0.720], [0.282, 0.678]
   ],
-  // Тренировочная площадка — широкая зона у мишеней
+  // Тренировочная площадка у мишеней — внутри песчаного двора
   yard: [
-    [0.580, 0.950], [0.640, 0.920], [0.710, 0.898],
-    [0.780, 0.882], [0.840, 0.872], [0.890, 0.868]
+    [0.700, 0.930], [0.760, 0.905], [0.820, 0.888], [0.870, 0.878]
   ]
 };
 
@@ -1535,16 +1581,13 @@ function initCityActors(W, H) {
     const startT = 0.15 + (i * 0.27) % 0.7;
     const pt = cityPathPoint(path, startT);
     const yard = routeName === 'yard';
-    // Боковое смещение: каждый боец идёт по своей «полосе»,
-    // чтобы не наслаивались друг на друга. Смещение по X в долях экрана.
-    const laneOffset = (i % 3 - 1) * 0.045;
     return {
       glad: g,
       route: routeName,
       path,
       pathT: startT,
       dir: i % 2 ? -1 : 1,
-      x: W * pt.x + laneOffset * W,
+      x: W * pt.x,
       y: H * pt.y,
       scale: H * cityScaleAt(pt.y) / 148,
       speed: yard ? 0.035 : 0.055,
@@ -1556,8 +1599,7 @@ function initCityActors(W, H) {
       victory: 0,
       swingPhase: Math.random() * 6,
       dustT: 0,
-      depth: 0,
-      laneOffset
+      depth: 0
     };
   });
 }
@@ -1606,9 +1648,7 @@ function updateCityActors(dt, W, H) {
       if (a.pathT <= 0) { a.pathT = 0; a.dir = 1; }
 
       const pt = cityPathPoint(a.path, a.pathT);
-      // Применяем боковое смещение: каждый боец идёт по своей полосе,
-      // чтобы отряд не превращался в «паровозик» из наложенных фигур.
-      const nx = W * pt.x + (a.laneOffset || 0) * W, ny = H * pt.y;
+      const nx = W * pt.x, ny = H * pt.y;
       // Направление взгляда — по горизонтальному смещению
       if (Math.abs(nx - a.x) > 0.4) a.faceDir = nx > a.x ? 1 : -1;
       a.x = nx;
@@ -1667,8 +1707,10 @@ function renderCityFrame(dt) {
   });
   c.globalAlpha = 1;
 
-  // Бойцы отряда — на своих маршрутах (улица, ступени, площадка)
-  cityActors.forEach(a => {
+  // Бойцы отряда — на своих маршрутах (улица, ступени, площадка).
+  // Рисуем от дальних к ближним: боец выше по экрану (меньше y) стоит
+  // дальше от камеры и должен перекрываться теми, кто идёт ниже.
+  cityActors.slice().sort((a, b) => a.y - b.y).forEach(a => {
     c.save();
     c.globalAlpha = 0.96 - a.depth * 0.16;
     drawBattleBrother(c, a.glad, a.x, a.y, a.scale, a.faceDir || a.dir || 1, {
@@ -1718,7 +1760,10 @@ function calcGladStats(glad) {
   const shieldDef = off && off.slot === 'offhand' ? (off.defBonus || 0) : 0;
   const def = glad.def + shieldDef + Math.round(attrs.wil * 0.5);
   const weapon = eq.weapon || { name: 'Кулаки', dmgMin: 4, dmgMax: 8, range: 1, apCost: 3, shape: 'fist' };
-  const offWeapon = off && off.slot === 'weapon' ? off : null;
+  // Второй клинок: либо отдельный предмет в левой руке, либо парный набор,
+  // который по определению держат в двух руках.
+  const offWeapon = off && off.slot === 'weapon' ? off
+    : (eq.weapon && eq.weapon.dualPair ? eq.weapon : null);
   return { armorHead, armorBody, def, weapon, offWeapon, attrs };
 }
 
@@ -1892,12 +1937,9 @@ function renderGladCard() {
 
   if (bust) {
     const ctx = bust.getContext('2d');
-    const bg = ctx.createLinearGradient(0, 0, 0, bust.height);
-    bg.addColorStop(0, '#2c2219');
-    bg.addColorStop(1, '#171210');
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, bust.width, bust.height);
-    drawGladCentered(ctx, g, bust.width, bust.height, 1.9);
+    // Фон не рисуем — персонаж поверх прозрачного холста (фон панели).
+    ctx.clearRect(0, 0, bust.width, bust.height);
+    drawGladCentered(ctx, g, bust.width, bust.height, 2.5);
   }
 }
 
@@ -1907,24 +1949,59 @@ function renderDoll(g) {
   slots.forEach(slot => {
     const el = document.getElementById('slot-' + slot);
     if (!el) return;
+    // .doll-slot — это родитель-ячейка; el (id=slot-*) — внутренний span.
+    // Рамку/свечение по тиру вешаем на родительскую ячейку.
+    const cell = el.closest('.doll-slot') || el;
     const it = g && g.equip ? g.equip[slot] : null;
     if (it) {
-      el.innerHTML = `<span class="ds-name">${it.name}</span>`;
-      el.classList.add('filled');
-      el.classList.remove('empty');
-      // Добавляем data-uid для тултипов
-      el.dataset.uid = it.uid;
-      el.dataset.slot = slot;
+      const t = TIER_INFO[it.tier] || TIER_INFO[1];
+      el.innerHTML = `<span class="ds-icon">${itemIconCanvas(it, 18)}</span>` +
+        `<span class="ds-info"><span class="ds-name">${it.name}</span>` +
+        `<span class="ds-tier" style="color:${t.color}">${t.stars} ${t.name}</span></span>`;
+      cell.classList.add('filled');
+      cell.classList.remove('empty');
+      cell.style.setProperty('--tier', t.color);
+      // data-slot нужен для клик-селектора и тултипов
+      cell.dataset.slot = slot;
     } else {
-      el.innerHTML = `<span class="ds-name">—</span>`;
-      el.classList.remove('filled');
-      el.classList.add('empty');
-      delete el.dataset.uid;
-      el.dataset.slot = slot;
+      el.innerHTML = `<span class="ds-ghost">${SLOT_ICONS[slot] || '◇'}</span>`;
+      cell.classList.remove('filled');
+      cell.classList.add('empty');
+      cell.style.removeProperty('--tier');
+      cell.dataset.slot = slot;
     }
   });
-  // Привязываем подсказки к манекену
-  bindSlotTips(g);
+  // Дорисовываем мини-иконки предметов в ячейках экипировки.
+  paintItemCanvases(document.querySelector('.doll'));
+  renderEquipSummary(g);
+  // Тултипы вешаем ОДИН раз на контейнер .doll: renderDoll вызывается
+  // при каждой пересборке карточки, но сам контейнер не пересоздаётся,
+  // поэтому слушатели не дублируются. Предмет берём по data-slot из
+  // glads.equip — так тултип всегда актуален после смены экипировки.
+  bindSlotTips();
+}
+
+// Сводка экипировки под манекеном: заполненность, урон, защита, общий
+// рейтинг. Заполняет пустое пространство и даёт быстрый обзор сборки бойца.
+function renderEquipSummary(g) {
+  const box = document.getElementById('equip-summary');
+  if (!box) return;
+  const eq = (g && g.equip) ? g.equip : {};
+  const slots = ['weapon', 'offhand', 'head', 'body', 'arms', 'legs'];
+  const filled = slots.filter(s => eq[s]).length;
+  const w = eq.weapon;
+  const dmg = w ? `${w.dmgMin}–${w.dmgMax}` : '—';
+  const armor = slots.reduce((sum, s) => sum + ((eq[s] && eq[s].armor) || 0), 0);
+  const shield = eq.offhand ? (eq.offhand.defBonus || 0) : 0;
+  const rating = slots.reduce((sum, s) => sum + itemPower(eq[s]), 0);
+  const bestTier = slots.reduce((m, s) => (eq[s] && (eq[s].tier || 0) > m) ? eq[s].tier : m, 0);
+  const bt = TIER_INFO[bestTier] || TIER_INFO[1];
+  box.innerHTML = `
+    <div class="es-cell"><span class="es-k">Слоты</span><span class="es-v">${filled}/${slots.length}</span></div>
+    <div class="es-cell"><span class="es-k">Урон</span><span class="es-v es-dmg">${dmg}</span></div>
+    <div class="es-cell"><span class="es-k">Броня</span><span class="es-v es-arm">${armor}</span></div>
+    <div class="es-cell"><span class="es-k">Щит</span><span class="es-v es-arm">${shield}</span></div>
+    <div class="es-cell es-wide"><span class="es-k">Рейтинг сборки</span><span class="es-v es-rate" style="color:${bt.color}">${rating} <small>· ${bt.name}</small></span></div>`;
 }
 
 // ==================== СЕЛЕКТОР СНАРЯЖЕНИЯ ====================
@@ -1935,7 +2012,7 @@ let SLOT_PICKER = { open: false, slot: null };
 function openSlotPicker(slot) {
   const glad = getSelectedGlad();
   if (!glad) return;
-  hideSlotTip();
+  hideItemTip();
   SLOT_PICKER.open = true;
   SLOT_PICKER.slot = slot;
 
@@ -2020,81 +2097,61 @@ document.addEventListener('click', ev => {
 });
 
 // ---------- Тултипы для экипированного снаряжения ----------
-let _slotTipsRoot = null;
-
-function bindSlotTips(g) {
-  // Ищем манекен (контейнер .doll)
+// Работают ровно так же, как подсказки предметов в складе: то же окно,
+// те же строки характеристик (itemTooltipHTML). Слушатели вешаются ОДИН
+// раз на контейнер .doll через делегирование — renderDoll пересобирает
+// innerHTML ячеек, но сам контейнер остаётся, поэтому дублей нет.
+function bindSlotTips() {
   const doll = document.querySelector('.doll');
-  if (!doll) return;
-  if (_slotTipsRoot === doll) return; // уже привязаны
-  _slotTipsRoot = doll;
+  if (!doll || doll.dataset.slotTipsBound === '1') return;
+  doll.dataset.slotTipsBound = '1';
 
-  doll.querySelectorAll('.doll-slot').forEach(slotEl => {
-    slotEl.addEventListener('mouseenter', ev => {
-      const uid = slotEl.dataset.uid;
-      if (!uid) return;
-      const item = (g && g.equip) ? g.equip[slotEl.dataset.slot] : null;
-      if (!item) return;
-      showSlotTip(ev, item);
-    });
-    slotEl.addEventListener('mousemove', ev => {
-      const uid = slotEl.dataset.uid;
-      if (!uid) return;
-      placeSlotTip(ev);
-    });
-    slotEl.addEventListener('mouseleave', () => {
-      hideSlotTip();
-    });
-    // Клик по ячейке (пустой или занятой) открывает селектор снаряжения
-    slotEl.addEventListener('click', () => {
-      const slot = slotEl.dataset.slot;
-      if (!slot) return;
-      if (SLOT_PICKER.open && SLOT_PICKER.slot === slot) { closeSlotPicker(); return; }
-      openSlotPicker(slot);
-    });
+  // Предмет в ячейке берём из экипировки выбранного бойца по data-slot,
+  // а не из data-uid: после надевания/снятия data-uid устарел бы.
+  const itemOf = slotEl => {
+    const g = getSelectedGlad();
+    const slot = slotEl && slotEl.dataset.slot;
+    return (g && g.equip && slot) ? g.equip[slot] : null;
+  };
+
+  doll.addEventListener('mouseover', ev => {
+    const slotEl = ev.target.closest('.doll-slot');
+    if (!slotEl) { hideItemTip(); return; }
+    const item = itemOf(slotEl);
+    if (!item) { hideItemTip(); return; }
+    if (slotEl === bindSlotTips._cur) { placeItemTip(ev); return; }
+    bindSlotTips._cur = slotEl;
+    showSlotTip(ev, item);
+  });
+  doll.addEventListener('mousemove', ev => {
+    const slotEl = ev.target.closest('.doll-slot');
+    if (slotEl && itemOf(slotEl)) placeItemTip(ev);
+  });
+  doll.addEventListener('mouseleave', () => {
+    bindSlotTips._cur = null;
+    hideItemTip();
+  });
+  // Клик по ячейке (пустой или занятой) открывает селектор снаряжения.
+  // Делегирование обязательно: renderDoll меняет содержимое ячеек,
+  // и слушатели, навешанные прямо на них, терялись бы при пересборке.
+  doll.addEventListener('click', ev => {
+    const slotEl = ev.target.closest('.doll-slot');
+    if (!slotEl) return;
+    const slot = slotEl.dataset.slot;
+    if (!slot) return;
+    if (SLOT_PICKER.open && SLOT_PICKER.slot === slot) { closeSlotPicker(); return; }
+    openSlotPicker(slot);
   });
 }
+bindSlotTips._cur = null;
 
+// Тултип ячейки манекена использует то же окно и то же размещение,
+// что и подсказки в складе, — окно одно на весь экран (item-tip).
 function showSlotTip(ev, item) {
-  const el = ensureSlotTip();
+  const el = ensureItemTip();
   el.innerHTML = itemTooltipHTML(item, getSelectedGlad());
   el.classList.add('show');
-  placeSlotTip(ev);
-}
-
-function placeSlotTip(ev) {
-  const el = document.getElementById('slot-tip');
-  if (!el) return;
-  const pad = 14;
-  const w = el.offsetWidth || 260;
-  const h = el.offsetHeight || 180;
-  let x = ev.clientX + pad;
-  let y = ev.clientY + pad;
-  if (x + w > window.innerWidth - 8) x = ev.clientX - w - pad;
-  if (y + h > window.innerHeight - 8) y = Math.max(8, ev.clientY - h - pad);
-  el.style.left = Math.max(8, x) + 'px';
-  el.style.top = Math.max(8, y) + 'px';
-}
-
-function hideSlotTip() {
-  const el = document.getElementById('slot-tip');
-  if (el) el.classList.remove('show');
-}
-
-function ensureSlotTip() {
-  let el = document.getElementById('slot-tip');
-  if (el && document.body.contains(el)) return el;
-  if (el && !document.body.contains(el)) {
-    el.id = 'slot-tip';
-    el.className = 'slot-tip';
-    document.body.appendChild(el);
-    return el;
-  }
-  el = document.createElement('div');
-  el.id = 'slot-tip';
-  el.className = 'slot-tip';
-  document.body.appendChild(el);
-  return el;
+  placeItemTip(ev);
 }
 
 // Drag & drop
@@ -2161,12 +2218,12 @@ function equipItemToSlot(uid, slot) {
   }
 
   // Двуручное и парное оружие освобождает левую руку
-  if (slot === 'weapon' && item.bothHands && glad.equip.offhand) {
+  if (slot === 'weapon' && (item.bothHands || item.dualPair) && glad.equip.offhand) {
     STATE.inventory.push(glad.equip.offhand);
     glad.equip.offhand = null;
   }
-  // Вторая рука занята двуручным — сначала убираем его
-  if (slot === 'offhand' && glad.equip.weapon && glad.equip.weapon.bothHands) {
+  // Вторая рука занята двуручным или парным набором — сначала убираем его
+  if (slot === 'offhand' && glad.equip.weapon && (glad.equip.weapon.bothHands || glad.equip.weapon.dualPair)) {
     STATE.inventory.push(glad.equip.weapon);
     glad.equip.weapon = null;
   }
@@ -2360,6 +2417,7 @@ function itemStatLine(item) {
     return `Урон ${item.dmgMin}–${item.dmgMax} • дист. ${item.range} • ${item.apCost} ОД • бронебой ${Math.round(item.armorPen * 100)}%${w}${hand}`;
   }
   if (item.slot === 'offhand') return `Защита +${item.defBonus} • прочность ${item.armor}`;
+  if (item.slot === 'doggear') return `Броня пса +${item.armor} • только для собак`;
   return `Броня +${item.armor}`;
 }
 
@@ -2420,6 +2478,9 @@ function itemTooltipHTML(item, glad) {
   } else if (item.slot === 'offhand') {
     rows.push(`<div class="it-main">Защита <b>+${item.defBonus || 0}</b></div>`);
     rows.push(`<div class="it-line">Прочность <b>${item.armor}</b>${item.emblem ? ` • герб: ${item.emblem}` : ''}</div>`);
+  } else if (item.slot === 'doggear') {
+    rows.push(`<div class="it-main">Броня пса <b>+${item.armor}</b></div>`);
+    rows.push(`<div class="it-line it-dim">надевается только на боевого пса</div>`);
   } else {
     rows.push(`<div class="it-main">Броня <b>+${item.armor}</b></div>`);
     if (item.defBonus) rows.push(`<div class="it-line">Защита <b>+${item.defBonus}</b></div>`);
@@ -2568,6 +2629,13 @@ function equipItem(uid) {
   if (idx === -1 || !glad) return;
   const item = STATE.inventory[idx];
 
+  // Попоны надеваются только на псов — в псарне, а не на гладиатора
+  if (item.slot === 'doggear') {
+    sfx('error');
+    addToast('Это снаряжение для пса. Надевайте его в псарне.');
+    return;
+  }
+
   // Проверка требований к характеристикам
   const check = canEquipItem(glad, item);
   if (!check.ok) {
@@ -2581,7 +2649,7 @@ function equipItem(uid) {
   }
 
   // Если правая рука занята двуручным или парным — левую не трогаем
-  const mainBoth = glad.equip.weapon && glad.equip.weapon.bothHands;
+  const mainBoth = glad.equip.weapon && (glad.equip.weapon.bothHands || glad.equip.weapon.dualPair);
 
   if (item.slot === 'weapon') {
     // Клинок димахера — это второй клинок, он идёт только в левую руку
@@ -2597,8 +2665,9 @@ function equipItem(uid) {
       renderInventory();
       return;
     }
-    // Обычный клинок при занятой левой руке щитом — щит уходит в склад
-    if (item.bothHands && glad.equip.offhand) unequipItem('offhand');
+    // Обычный клинок при занятой левой руке щитом — щит уходит в склад.
+    // Парный набор тоже занимает обе руки, поэтому щит убираем и для него.
+    if ((item.bothHands || item.dualPair) && glad.equip.offhand) unequipItem('offhand');
     if (glad.equip.weapon) STATE.inventory.push(glad.equip.weapon);
     glad.equip.weapon = item;
   } else if (item.slot === 'offhand') {
@@ -2861,11 +2930,14 @@ function hireRecruit(idx) {
 // ==================== МАГАЗИН ====================
 function shopTab(tab) {
   STATE.shopTab = tab;
-  STATE.shopCat = tab === 'weapon' ? 'sword' : 'offhand';
+  if (tab === 'weapon') STATE.shopCat = 'sword';
+  else if (tab === 'dog') STATE.shopCat = 'doggear';
+  else STATE.shopCat = 'offhand';
   renderMarket();
 }
 function shopCat(cat) {
   if (STATE.shopTab === 'weapon') STATE.shopCat = cat;
+  else if (STATE.shopTab === 'dog') STATE.shopCat = 'doggear';
   else STATE.armorCat = cat;
   renderMarket();
 }
@@ -2904,8 +2976,9 @@ function renderMarket() {
   if (!grid) return;
 
   const isWeapon = STATE.shopTab === 'weapon';
-  const cats = isWeapon ? WEAPON_CATS : ARMOR_CATS;
-  const activeCat = isWeapon ? STATE.shopCat : STATE.armorCat;
+  const isDog = STATE.shopTab === 'dog';
+  const cats = isWeapon ? WEAPON_CATS : isDog ? DOG_GEAR_CATS : ARMOR_CATS;
+  const activeCat = isWeapon ? STATE.shopCat : isDog ? 'doggear' : STATE.armorCat;
   const payFame = false;   // слава больше не покупает снаряжение
 
   if (catsEl) {
@@ -3045,6 +3118,7 @@ function applyCosmetic(id, silent) {
 
   if (c.kind === 'build') g.build = c.value;
   else if (c.kind === 'hair') g.hairStyle = c.value;
+  else if (c.kind === 'beard') g.beardStyle = g.gender === 'female' ? 'none' : c.value;
   else if (c.kind === 'tattoo') g.tattoo = c.value;
   else if (c.kind === 'paint') g.paint = c.value;
   g.cosmetic[c.kind] = c.value;
@@ -3071,6 +3145,126 @@ function limbHealCost(g, limbId) {
   return missing <= 0 ? 0 : Math.max(5, Math.round(missing * 0.65));
 }
 
+// ==================== ПАССИВНАЯ РЕГЕНЕРАЦИЯ ====================
+// Бойцы залечивают раны сами: полное восстановление тела занимает
+// REGEN_FULL_MS (10 минут) реального времени вне боя. Конечности
+// восстанавливаются вдвое медленнее — их всё ещё выгоднее лечить в храме.
+const REGEN_FULL_MS = 10 * 60 * 1000;
+const REGEN_LIMB_FACTOR = 2;
+
+// Сколько HP в секунду восстанавливает боец (доля от максимума)
+function regenPerSec(g) {
+  if (!g || !(g.maxHp > 0)) return 0;
+  return g.maxHp / (REGEN_FULL_MS / 1000);
+}
+
+// Прогресс до полного выздоровления (0..1) — для отображения в храме
+function regenProgress(g) {
+  if (!g || !(g.maxHp > 0)) return 1;
+  return clamp01(g.hp / g.maxHp);
+}
+
+// Оценка времени до полного выздоровления тела, в секундах
+function regenEtaSec(g) {
+  if (!g || !(g.maxHp > 0)) return 0;
+  const missing = Math.max(0, g.maxHp - g.hp);
+  if (missing <= 0) return 0;
+  const per = regenPerSec(g);
+  return per > 0 ? missing / per : 0;
+}
+
+// Идёт ли регенерация сейчас (не в бою, не при конце игры)
+function regenActive() {
+  if (STATE.gameOver) return false;
+  if (STATE.currentLocation === 'combat') return false;
+  if (typeof COMBAT !== 'undefined' && COMBAT && COMBAT.active) return false;
+  return true;
+}
+
+// Применяет накопленное время к бойцам. HP в игре целочисленный,
+// поэтому дробную часть копим в STATE.regen[id] и переносим в hp.
+function applyRegen(elapsedMs) {
+  if (!(elapsedMs > 0)) return false;
+  const all = (STATE.roster || []).concat(STATE.dogs || []);
+  if (!STATE.regen || typeof STATE.regen !== 'object') STATE.regen = {};
+  const bodyShare = elapsedMs / REGEN_FULL_MS;
+  const limbShare = bodyShare / REGEN_LIMB_FACTOR;
+  let changed = false;
+
+  all.forEach(g => {
+    if (!g || g.dead || !(g.maxHp > 0)) return;
+    const key = g.id;
+
+    // Тело: копим дробные HP. Павших (hp <= 0) поднимает только Медикус.
+    if (g.hp > 0 && g.hp < g.maxHp) {
+      const acc = (STATE.regen[key] || 0) + g.maxHp * bodyShare;
+      const whole = Math.floor(acc);
+      if (whole > 0) {
+        g.hp = Math.min(g.maxHp, g.hp + whole);
+        STATE.regen[key] = acc - whole;
+        changed = true;
+      } else {
+        STATE.regen[key] = acc;
+      }
+    } else {
+      STATE.regen[key] = 0;
+    }
+
+    // Конечности: тоже целочисленно, отрубленные не восстанавливаются
+    if (g.limbs) {
+      Object.keys(g.limbs).forEach(id => {
+        const s = g.limbs[id];
+        if (!s || s.lost || !(s.max > 0) || s.hp >= s.max) return;
+        const lk = key + ':' + id;
+        const acc = (STATE.regen[lk] || 0) + s.max * limbShare;
+        const whole = Math.floor(acc);
+        if (whole > 0) {
+          s.hp = Math.min(s.max, s.hp + whole);
+          STATE.regen[lk] = acc - whole;
+          changed = true;
+        } else {
+          STATE.regen[lk] = acc;
+        }
+      });
+    }
+  });
+  return changed;
+}
+
+let regenTimer = null;
+
+// Запуск фонового тика регенерации (раз в 2 секунды)
+function startRegenLoop() {
+  if (regenTimer) return;
+  STATE.regenAt = Date.now();
+  regenTimer = setInterval(() => {
+    const now = Date.now();
+    const dt = now - (STATE.regenAt || now);
+    STATE.regenAt = now;
+    if (!regenActive()) return;
+    if (!(dt > 0)) return;
+    // Ограничиваем шаг: если вкладка спала, не лечим мгновенно всё
+    const step = Math.min(dt, 60 * 1000);
+    if (applyRegen(step)) {
+      updateUI();
+      if (STATE.currentLocation === 'temple') renderTemple();
+      else if (STATE.currentLocation === 'barracks') { renderGladCard(); renderRoster(); }
+    }
+  }, 2000);
+}
+
+function stopRegenLoop() {
+  if (regenTimer) { clearInterval(regenTimer); regenTimer = null; }
+}
+
+// Форматирует секунды в «м:сс»
+function fmtEta(sec) {
+  const s = Math.max(0, Math.ceil(sec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}:${String(r).padStart(2, '0')}` : `${r}с`;
+}
+
 function renderTemple() {
   const el = document.getElementById('temple-list');
   if (!el) return;
@@ -3080,33 +3274,50 @@ function renderTemple() {
   el.innerHTML = all.map(g => {
     const hurt = g.hp < g.maxHp;
     const cost = healCost(g);
+    const pct = Math.round((g.hp / g.maxHp) * 100);
+    const hcls = pct <= 0 ? 'dead' : pct < 30 ? 'crit' : pct < 65 ? 'wound' : 'fit';
+    const lost = LIMB_DEFS.filter(l => g.limbs && g.limbs[l.id] && g.limbs[l.id].lost).length;
+    const status = pct <= 0 ? 'Павший' : lost ? 'Калечный' : hurt ? 'Раненый' : 'Здоров';
+    const eta = hurt ? fmtEta(regenEtaSec(g)) : '';
     const limbs = LIMB_DEFS.map(l => {
       const s = g.limbs && g.limbs[l.id];
       if (!s) return '';
-      const pct = s.lost ? 0 : Math.round((s.hp / s.max) * 100);
-      const cls = s.lost ? 'lost' : pct < 30 ? 'low' : pct < 65 ? 'mid' : 'ok';
+      const lp = s.lost ? 0 : Math.round((s.hp / s.max) * 100);
+      const cls = s.lost ? 'lost' : lp < 30 ? 'low' : lp < 65 ? 'mid' : 'ok';
       const lc = limbHealCost(g, l.id);
       return `<div class="temple-limb ${cls}" ${lc ? `onclick="healLimb('${g.id}','${l.id}')" title="Вылечить: ${lc}з"` : ''}>
         <span class="tl-ico">${l.icon}</span>
         <span class="tl-name">${l.short}</span>
-        <div class="tl-bar"><i style="width:${pct}%"></i></div>
+        <div class="tl-bar"><i style="width:${lp}%"></i></div>
         <span class="tl-val">${s.lost ? 'нет' : s.hp + '/' + s.max}</span>
         ${lc ? `<span class="tl-cost">${lc}з</span>` : ''}
       </div>`;
     }).join('');
 
-    return `<div class="temple-card ${g.isDog ? 'is-dog' : ''}">
-      <div class="tc-head">
-        <span class="tc-name">${g.isDog ? '🐕 ' : ''}${g.name}</span>
-        <span class="tc-hp">${g.hp}/${g.maxHp} HP ${hurt ? '' : '• здоров'}</span>
+    return `<div class="temple-card ${g.isDog ? 'is-dog' : ''} ${hurt ? 'hurt' : 'healthy'}" data-gid="${g.id}">` +
+      `<div class="tc-portrait"><canvas class="tc-face" width="64" height="78" data-tp-id="${g.id}"></canvas></div>
+      <div class="tc-main">
+        <div class="tc-head">
+          <span class="tc-name">${g.isDog ? '🐕 ' : ''}${g.name} <span class="tc-badge ${hcls}">${status}</span></span>
+          <span class="tc-hp"><b>${g.hp}</b>/${g.maxHp}</span>
+        </div>
+        <div class="tc-bar ${hcls}"><i style="width:${pct}%"></i><em>${pct}%</em></div>
+        ${hurt ? `<div class="tc-regen"><span class="tcr-ico">✦</span> Заживает само — полностью через <b>${eta}</b></div>` : ''}
+        <div class="tc-limbs">${limbs}</div>
+        <button class="tc-heal ${hurt ? '' : 'ok'}" ${hurt ? '' : 'disabled'} onclick="healGlad('${g.id}')">
+          ${hurt ? `<span class="tch-ico">⚕</span> Залечить раны <b>${cost}з</b>` : '<span class="tch-ico">✓</span> Цел и невредим'}
+        </button>
       </div>
-      <div class="tc-bar"><i style="width:${(g.hp / g.maxHp) * 100}%"></i></div>
-      <div class="tc-limbs">${limbs}</div>
-      <button class="mini-btn ${hurt ? 'primary' : ''}" ${hurt ? '' : 'disabled'} onclick="healGlad('${g.id}')">
-        ${hurt ? 'Вылечить тело • ' + cost + 'з' : 'тело здорово'}
-      </button>
     </div>`;
   }).join('');
+  // Рисуем портреты гладиаторов (тот же приём, что и в казарме)
+  el.querySelectorAll('canvas.tc-face').forEach(cv => {
+    const g = all.find(x => x.id === cv.dataset.tpId);
+    if (!g) return;
+    const ctx = cv.getContext('2d');
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    drawGladCentered(ctx, g, cv.width, cv.height, 2.2);
+  });
   const tg = document.getElementById('temple-gold');
   if (tg) tg.textContent = STATE.gold;
 }
@@ -3121,7 +3332,16 @@ function healGlad(id) {
   sfx('heal');
   updateUI();
   renderTemple();
+  flashHealed(id);
   if (typeof Save !== 'undefined') Save.autosave();
+}
+
+// Короткая зелёная вспышка на карточке только что вылеченного бойца
+function flashHealed(id) {
+  const card = document.querySelector(`.temple-card[data-gid="${id}"]`);
+  if (!card) return;
+  card.classList.add('heal-flash');
+  setTimeout(() => card.classList.remove('heal-flash'), 720);
 }
 
 // Лечение одной конечности — очерёдность выбирает игрок
@@ -3138,6 +3358,7 @@ function healLimb(id, limbId) {
   sfx('heal');
   updateUI();
   renderTemple();
+  flashHealed(id);
   if (typeof Save !== 'undefined') Save.autosave();
 }
 
@@ -3164,6 +3385,7 @@ function healAll() {
   sfx('heal');
   updateUI();
   renderTemple();
+  wounded.forEach(g => flashHealed(g.id));
   if (typeof Save !== 'undefined') Save.autosave();
 }
 
@@ -3196,10 +3418,13 @@ function renderKennel() {
       ? dogs.map(d => {
           const pct = Math.round((d.hp / d.maxHp) * 100);
           const inSquad = STATE.squad.includes(d.id);
+          const gear = d.equip && d.equip.doggear;
           return `<div class="ko-dog ${inSquad ? 'in-squad' : ''}">
             <span class="ko-name">🐕 ${d.name}</span>
             <span class="ko-lvl">ур.${d.level}</span>
             <div class="ko-bar"><i style="width:${pct}%"></i></div>
+            <span class="ko-gear ${gear ? 'on' : ''}" title="${gear ? gear.name : 'Попона не надета'}"
+              onclick="openDogGearPicker('${d.id}')">${gear ? '🦺' : '➕'}</span>
             <button class="mini-btn ${inSquad ? 'on' : ''}" onclick="toggleSquad('${d.id}')">
               ${inSquad ? 'в отряде' : 'в отряд'}
             </button>
@@ -3240,9 +3465,95 @@ function renderKennel() {
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, c.width, c.height);
     if (typeof drawBattleDog === 'function') {
-      drawBattleDog(ctx, dog, c.width / 2, c.height - 22, 0.9, 1, {});
+      // Пёс «стоит» на нижней трети карточки — как и гладиаторы в найме
+      drawBattleDog(ctx, dog, c.width / 2 - 4, c.height - 26, 1.12, 1, {});
     }
   });
+}
+
+// ---------- Снаряжение пса: выбор попоны из склада ----------
+// Псы не входят в STATE.roster, поэтому обычный селектор снаряжения
+// (он работает по выбранному гладиатору) им не подходит — здесь свой.
+function openDogGearPicker(dogId) {
+  const dog = (STATE.dogs || []).find(d => d.id === dogId);
+  if (!dog) return;
+  const modal = document.getElementById('dog-gear-modal');
+  const body = document.getElementById('dog-gear-body');
+  if (!modal || !body) return;
+
+  const cur = dog.equip && dog.equip.doggear ? dog.equip.doggear : null;
+  const list = STATE.inventory.filter(it => it.slot === 'doggear');
+
+  const listHtml = list.length
+    ? list.sort((a, b) => (b.tier || 0) - (a.tier || 0)).map(it => {
+        const t = TIER_INFO[it.tier] || TIER_INFO[1];
+        return `<div class="sp-item" onclick="equipDogGear('${dog.id}','${it.uid}')">
+          <div class="spi-icon">${itemIconCanvas(it, 40)}</div>
+          <div class="spi-body">
+            <div class="spi-top">
+              <span class="spi-name">${it.name}</span>
+              <span class="tier-badge" style="color:${t.color};border-color:${t.color}">${t.stars}</span>
+            </div>
+            <div class="spi-stat">${itemStatLine(it)}</div>
+          </div>
+        </div>`;
+      }).join('')
+    : `<div class="sp-empty">Попон в складе нет.<br>Купите их в кузнице на вкладке «🐕 Псы».</div>`;
+
+  body.innerHTML = `
+    <div class="dg-head">
+      <canvas id="dg-dog-canvas" width="120" height="120"></canvas>
+      <div>
+        <div class="dg-name">${dog.name}</div>
+        <div class="dg-sub">${dog.breedName || 'Боевой пёс'}</div>
+        <div class="dg-gear">${cur ? `Надето: <b>${cur.name}</b> (+${cur.armor} брони)` : 'Попона не надета'}</div>
+      </div>
+    </div>
+    ${cur ? `<button class="sp-unequip" onclick="unequipDogGear('${dog.id}')">✕ Снять «${cur.name}»</button>` : ''}
+    <div class="sp-list">${listHtml}</div>`;
+
+  modal.style.display = 'flex';
+  paintItemCanvases(body);
+  const c = document.getElementById('dg-dog-canvas');
+  if (c && typeof drawBattleDog === 'function') {
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0, 0, c.width, c.height);
+    drawBattleDog(ctx, dog, c.width / 2, c.height - 14, 0.92, 1, {});
+  }
+}
+
+function closeDogGearPicker() {
+  const modal = document.getElementById('dog-gear-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function equipDogGear(dogId, uid) {
+  const dog = (STATE.dogs || []).find(d => d.id === dogId);
+  const idx = STATE.inventory.findIndex(i => i.uid === uid);
+  if (!dog || idx === -1) return;
+  const item = STATE.inventory[idx];
+  if (item.slot !== 'doggear') return;
+  if (!dog.equip) dog.equip = { weapon: null, offhand: null, head: null, body: null, arms: null, legs: null, doggear: null };
+  if (dog.equip.doggear) STATE.inventory.push(dog.equip.doggear);
+  dog.equip.doggear = item;
+  STATE.inventory.splice(idx, 1);
+  sfx('click');
+  renderKennel();
+  updateUI();
+  if (typeof Save !== 'undefined') Save.autosave();
+  openDogGearPicker(dogId);
+}
+
+function unequipDogGear(dogId) {
+  const dog = (STATE.dogs || []).find(d => d.id === dogId);
+  if (!dog || !dog.equip || !dog.equip.doggear) return;
+  STATE.inventory.push(dog.equip.doggear);
+  dog.equip.doggear = null;
+  sfx('click');
+  renderKennel();
+  updateUI();
+  if (typeof Save !== 'undefined') Save.autosave();
+  openDogGearPicker(dogId);
 }
 
 function hireDog(idx) {
@@ -3349,6 +3660,11 @@ function openChest(id) {
   const wrap = body.querySelector('.chest-reel-wrap');
   if (!reel || !wrap) return;
 
+  // Кнопка «Забрать» заблокирована, пока рулетка крутится: приз можно
+  // забрать только когда лента остановилась и результат показан.
+  const takeBtn = document.getElementById('chest-take-btn');
+  if (takeBtn) { takeBtn.disabled = true; takeBtn.classList.add('is-locked'); }
+
   let revealed = false;
   const reveal = () => {
     if (revealed) return;
@@ -3358,9 +3674,8 @@ function openChest(id) {
     sfx(res.tier >= 4 ? 'levelup' : 'open');
     const out = document.getElementById('chest-result');
     if (out) out.classList.add('show');
-    // Отдельное всплывающее уведомление о выигрыше — чтобы приз
-    // было точно видно, даже если игрок не смотрит на панель результата.
-    showChestWin(res.item, res.tier);
+    // Лента остановилась — теперь можно забирать
+    if (takeBtn) { takeBtn.disabled = false; takeBtn.classList.remove('is-locked'); }
   };
 
   // Ставим ленту в старт, затем одним переходом раскручиваем до приза
@@ -3388,75 +3703,6 @@ function closeChestModal() {
   if (m) m.style.display = 'none';
 }
 
-// ==================== УВЕДОМЛЕНИЕ О ВЫИГРЫШЕ СУНДУКА ====================
-let _chestWinTimer = null;
-
-function showChestWin(item, tier) {
-  const box = document.getElementById('chest-win');
-  if (!box || !item) return;
-  const t = TIER_INFO[tier] || TIER_INFO[1];
-  box.querySelector('.chest-win-name').textContent = item.name;
-  box.querySelector('.chest-win-stat').innerHTML =
-    `<span style="color:${t.color}">${t.stars} ${t.name}</span> • ${itemStatLine(item)}`;
-  box.classList.add('show');
-  clearTimeout(_chestWinTimer);
-  // Через 6 секунд само скрывается — чтобы не мешало дальше крутить
-  _chestWinTimer = setTimeout(closeChestWin, 6000);
-}
-
-function closeChestWin() {
-  const box = document.getElementById('chest-win');
-  if (box) box.classList.remove('show');
-  clearTimeout(_chestWinTimer);
-}
-
-// ==================== КНОПОЧНЫЕ ТУЛТИПЫ ====================
-let _btnTipEl = null;
-
-function ensureBtnTip() {
-  if (!_btnTipEl || !document.body.contains(_btnTipEl)) {
-    _btnTipEl = document.createElement('div');
-    _btnTipEl.id = 'btn-tip';
-    _btnTipEl.className = 'btn-tip';
-    document.body.appendChild(_btnTipEl);
-  }
-  return _btnTipEl;
-}
-
-function showBtnTip(ev) {
-  const btn = ev.target.closest('[data-tip]');
-  if (!btn) { hideBtnTip(); return; }
-  const text = btn.getAttribute('data-tip');
-  if (!text) { hideBtnTip(); return; }
-  const el = ensureBtnTip();
-  el.innerHTML = text;
-  el.classList.add('show');
-  const pad = 10;
-  const w = el.offsetWidth || 200;
-  const h = el.offsetHeight || 40;
-  let x = ev.clientX + pad;
-  let y = ev.clientY - h - pad;
-  if (x + w > window.innerWidth - 8) x = ev.clientX - w - pad;
-  if (y < 8) y = ev.clientY + pad;
-  el.style.left = Math.max(8, x) + 'px';
-  el.style.top = Math.max(8, y) + 'px';
-}
-
-function hideBtnTip() {
-  const el = document.getElementById('btn-tip');
-  if (el) el.classList.remove('show');
-}
-
-// Авто-подписка на кнопки: ищем все [data-tip] при загрузке
-document.addEventListener('DOMContentLoaded', () => {
-  document.addEventListener('mouseover', showBtnTip);
-  document.addEventListener('mousemove', ev => {
-    if (ev.target.closest('[data-tip]')) showBtnTip(ev);
-  });
-  document.addEventListener('mouseleave', ev => {
-    if (!ev.target.closest('[data-tip]')) hideBtnTip();
-  }, true);
-});
 let currentTalker = null;
 
 function drinkBeer() {
@@ -3898,6 +4144,198 @@ function stopTrainingAnim() {
   trainingTs = 0;
 }
 
+// ==================== ФОН ДВОРА ТРЕНИРОВОК ====================
+// Детализированная сцена: тёплый закат, стена лудуса с арками и колоннами,
+// тренировочные стойки, факелы, песчаный двор с тенями и травой.
+function drawTrainingBackdrop(ctx, W, H, t, groundY) {
+  const horizon = H * 0.60;
+
+  // Небо: тёплый градиент заката
+  const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+  sky.addColorStop(0, '#2c3b52');
+  sky.addColorStop(0.45, '#6d6a78');
+  sky.addColorStop(0.72, '#c08a5e');
+  sky.addColorStop(1, '#e8b878');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, horizon);
+
+  // Солнце у горизонта с мягким ореолом
+  const sunX = W * 0.78, sunY = horizon - H * 0.10;
+  const halo = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, H * 0.32);
+  halo.addColorStop(0, 'rgba(255,225,160,0.55)');
+  halo.addColorStop(0.45, 'rgba(255,190,120,0.18)');
+  halo.addColorStop(1, 'rgba(255,170,100,0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(sunX - H * 0.35, sunY - H * 0.35, H * 0.7, H * 0.7);
+  ctx.fillStyle = 'rgba(255,240,200,0.85)';
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, H * 0.045, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Дальние холмы
+  ctx.fillStyle = 'rgba(92,96,102,0.45)';
+  ctx.beginPath();
+  ctx.moveTo(0, horizon);
+  for (let x = 0; x <= W; x += W / 12) {
+    ctx.lineTo(x, horizon - H * (0.05 + 0.035 * Math.sin(x * 0.004 + 1.2)));
+  }
+  ctx.lineTo(W, horizon);
+  ctx.closePath();
+  ctx.fill();
+
+  // Стена лудуса: каменная кладка
+  const wallTop = H * 0.30;
+  const wallGrad = ctx.createLinearGradient(0, wallTop, 0, horizon);
+  wallGrad.addColorStop(0, '#7a6144');
+  wallGrad.addColorStop(0.55, '#63503a');
+  wallGrad.addColorStop(1, '#4a3a2a');
+  ctx.fillStyle = wallGrad;
+  ctx.fillRect(0, wallTop, W, horizon - wallTop);
+
+  // Кладка — горизонтальные швы и вертикальные стыки
+  ctx.strokeStyle = 'rgba(28,20,14,0.28)';
+  ctx.lineWidth = 1;
+  const brickH = 13;
+  for (let y = wallTop + brickH; y < horizon; y += brickH) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    const offset = (Math.round((y - wallTop) / brickH) % 2) * 26;
+    for (let x = offset; x < W; x += 52) {
+      ctx.beginPath(); ctx.moveTo(x, y - brickH); ctx.lineTo(x, y); ctx.stroke();
+    }
+  }
+
+  // Арки с тенью внутри
+  const archCount = 9;
+  const archW = (W - 40) / archCount;
+  for (let i = 0; i < archCount; i++) {
+    const ax = 20 + i * archW;
+    const aw = archW - 14;
+    const aTop = wallTop + H * 0.09;
+    const aBot = horizon - H * 0.01;
+    const arch = ctx.createLinearGradient(0, aTop, 0, aBot);
+    arch.addColorStop(0, '#1a1208');
+    arch.addColorStop(1, '#3a2c1e');
+    ctx.fillStyle = arch;
+    ctx.beginPath();
+    ctx.moveTo(ax, aBot);
+    ctx.lineTo(ax, aTop + aw / 2);
+    ctx.quadraticCurveTo(ax, aTop, ax + aw / 2, aTop);
+    ctx.quadraticCurveTo(ax + aw, aTop, ax + aw, aTop + aw / 2);
+    ctx.lineTo(ax + aw, aBot);
+    ctx.closePath();
+    ctx.fill();
+    // Обводка-архивольт
+    ctx.strokeStyle = 'rgba(196,164,110,0.35)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  // Верхний карниз стены
+  ctx.fillStyle = '#8a7052';
+  ctx.fillRect(0, wallTop - H * 0.035, W, H * 0.035);
+  ctx.fillStyle = 'rgba(255,235,190,0.14)';
+  ctx.fillRect(0, wallTop - H * 0.035, W, 2);
+
+  // Факелы у стены с живым пламенем
+  for (let i = 1; i < archCount; i += 2) {
+    const fx = 20 + i * archW - 7;
+    const fy = wallTop + H * 0.10;
+    ctx.fillStyle = '#2a1c10';
+    ctx.fillRect(fx - 2, fy, 4, 22);
+    const flick = 0.8 + Math.sin(t * 9 + i * 2.1) * 0.2;
+    const fg = ctx.createRadialGradient(fx, fy - 6, 0, fx, fy - 6, 26 * flick);
+    fg.addColorStop(0, 'rgba(255,230,150,0.95)');
+    fg.addColorStop(0.4, 'rgba(255,160,60,0.45)');
+    fg.addColorStop(1, 'rgba(255,120,30,0)');
+    ctx.fillStyle = fg;
+    ctx.beginPath(); ctx.arc(fx, fy - 6, 26 * flick, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffd27a';
+    ctx.beginPath();
+    ctx.ellipse(fx, fy - 8, 3.4, 7 * flick, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Песчаный двор
+  const sand = ctx.createLinearGradient(0, horizon, 0, H);
+  sand.addColorStop(0, '#b39468');
+  sand.addColorStop(0.35, '#a07f56');
+  sand.addColorStop(1, '#6d5638');
+  ctx.fillStyle = sand;
+  ctx.fillRect(0, horizon, W, H - horizon);
+
+  // Граница стены и земли — тень
+  const shadow = ctx.createLinearGradient(0, horizon, 0, horizon + H * 0.10);
+  shadow.addColorStop(0, 'rgba(40,26,14,0.45)');
+  shadow.addColorStop(1, 'rgba(40,26,14,0)');
+  ctx.fillStyle = shadow;
+  ctx.fillRect(0, horizon, W, H * 0.10);
+
+  // Утоптанные дорожки и пятна песка
+  ctx.save();
+  ctx.globalAlpha = 0.30;
+  for (let i = 0; i < 7; i++) {
+    const px = W * (0.06 + i * 0.14);
+    ctx.fillStyle = i % 2 ? 'rgba(120,94,62,0.6)' : 'rgba(206,182,142,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(px, horizon + H * (0.10 + (i % 3) * 0.09), W * 0.10, H * 0.028, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Трава по краям двора
+  ctx.fillStyle = 'rgba(88,112,60,0.55)';
+  ctx.beginPath();
+  ctx.ellipse(W * 0.04, H * 0.97, W * 0.13, H * 0.055, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(W * 0.99, H * 0.93, W * 0.10, H * 0.045, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Тренировочные стойки справа: деревянные манекены
+  drawTrainPost(ctx, W * 0.885, groundY - 6, H * 0.20);
+  drawTrainPost(ctx, W * 0.955, groundY - 2, H * 0.16);
+
+  // Пара копий, воткнутых в землю у стены
+  ctx.strokeStyle = '#5a4326';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(W * 0.055, groundY - H * 0.02); ctx.lineTo(W * 0.075, groundY - H * 0.30);
+  ctx.moveTo(W * 0.09, groundY - H * 0.01); ctx.lineTo(W * 0.105, groundY - H * 0.26);
+  ctx.stroke();
+  ctx.fillStyle = '#c9c4b4';
+  ctx.beginPath();
+  ctx.moveTo(W * 0.075, groundY - H * 0.30); ctx.lineTo(W * 0.070, groundY - H * 0.335);
+  ctx.lineTo(W * 0.081, groundY - H * 0.325); ctx.closePath(); ctx.fill();
+}
+
+// Деревянный тренировочный столб с перекладинами
+function drawTrainPost(ctx, x, baseY, h) {
+  const w = Math.max(6, h * 0.10);
+  // Тень
+  ctx.fillStyle = 'rgba(30,20,10,0.28)';
+  ctx.beginPath();
+  ctx.ellipse(x + w * 0.8, baseY + 2, w * 2.2, w * 0.7, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Столб
+  const g = ctx.createLinearGradient(x - w / 2, 0, x + w / 2, 0);
+  g.addColorStop(0, '#4a3520');
+  g.addColorStop(0.5, '#7a5a34');
+  g.addColorStop(1, '#3e2c1a');
+  ctx.fillStyle = g;
+  ctx.fillRect(x - w / 2, baseY - h, w, h);
+  // Перекладины
+  ctx.fillStyle = '#5e4526';
+  ctx.fillRect(x - w * 2, baseY - h * 0.82, w * 4, w * 0.7);
+  ctx.fillRect(x - w * 1.5, baseY - h * 0.52, w * 3, w * 0.6);
+  // Обмотка-солома
+  ctx.strokeStyle = 'rgba(200,170,110,0.4)';
+  ctx.lineWidth = 1.5;
+  for (let i = 0; i < 4; i++) {
+    const yy = baseY - h * (0.2 + i * 0.16);
+    ctx.beginPath(); ctx.moveTo(x - w / 2, yy); ctx.lineTo(x + w / 2, yy); ctx.stroke();
+  }
+}
+
 function drawTrainingFrame(dt, ts) {
   const cv = document.getElementById('trainingCanvas');
   if (!cv) return;
@@ -3920,45 +4358,8 @@ function drawTrainingFrame(dt, ts) {
 
   ctx.clearRect(0, 0, W, H);
 
-  // Небо и стена лудуса
-  const sky = ctx.createLinearGradient(0, 0, 0, H * 0.62);
-  sky.addColorStop(0, '#3a4a5e');
-  sky.addColorStop(1, '#b08a5a');
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, W, H * 0.62);
-
-  // Стена с арками
-  ctx.fillStyle = '#6a5238';
-  ctx.fillRect(0, H * 0.34, W, H * 0.28);
-  for (let i = 0; i < 9; i++) {
-    const ax = 20 + i * (W - 40) / 9;
-    ctx.fillStyle = 'rgba(30,20,12,0.7)';
-    ctx.beginPath();
-    ctx.moveTo(ax, H * 0.60);
-    ctx.lineTo(ax, H * 0.44);
-    ctx.quadraticCurveTo(ax + 22, H * 0.36, ax + 44, H * 0.44);
-    ctx.lineTo(ax + 44, H * 0.60);
-    ctx.closePath();
-    ctx.fill();
-  }
-
-  // Двор: утоптанная земля
-  const gr = ctx.createLinearGradient(0, H * 0.60, 0, H);
-  gr.addColorStop(0, '#9a7f56');
-  gr.addColorStop(1, '#5a4630');
-  ctx.fillStyle = gr;
-  ctx.fillRect(0, H * 0.60, W, H * 0.40);
-
-  // Трава по краям
-  ctx.fillStyle = 'rgba(92,120,64,0.5)';
-  ctx.beginPath();
-  ctx.ellipse(W * 0.08, H * 0.94, W * 0.12, H * 0.06, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.ellipse(W * 0.94, H * 0.9, W * 0.1, H * 0.05, 0, 0, Math.PI * 2);
-  ctx.fill();
-
   const groundY = H * 0.86;
+  drawTrainingBackdrop(ctx, W, H, t, groundY);
 
   // --- Боец бьёт по щиту ---
   const fighter = g.id ? STATE.roster.find(x => x.id === g.id) : STATE.roster[0];
@@ -3969,17 +4370,6 @@ function drawTrainingFrame(dt, ts) {
       walk: 0, swing, breath: 1.2, emotion: 'angry'
     });
   }
-
-  // Щит-мишень
-  const sx = W * 0.52;
-  const sy = groundY - H * 0.26;
-  ctx.fillStyle = '#6a4a2a';
-  ctx.beginPath(); ctx.ellipse(sx, sy, 46, 54, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = '#8a6a3a';
-  ctx.lineWidth = 6;
-  ctx.beginPath(); ctx.ellipse(sx, sy, 40, 48, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.fillStyle = '#c9a45c';
-  ctx.beginPath(); ctx.arc(sx, sy, 12, 0, Math.PI * 2); ctx.fill();
 
   // --- Дорожки ритма ---
   const laneX0 = W * 0.60;
@@ -3992,44 +4382,117 @@ function drawTrainingFrame(dt, ts) {
   for (let i = 0; i < 4; i++) {
     const y = top + i * (laneH + laneGap);
     const active = g.running && i === g.lane;
-    // Дорожка
-    ctx.fillStyle = active ? 'rgba(229,181,79,0.16)' : 'rgba(20,14,10,0.55)';
-    ctx.beginPath();
-    ctx.roundRect ? ctx.roundRect(laneX0, y, laneW, laneH, 8) : ctx.rect(laneX0, y, laneW, laneH);
-    ctx.fill();
-    ctx.strokeStyle = active ? 'rgba(229,181,79,0.6)' : 'rgba(120,100,74,0.4)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    const nowMs = ts || performance.now();
+    const delta = active ? Math.abs(g.nextBeatAt - nowMs) : 9999;
+    const nearBeat = active && delta <= TRAIN_WINDOW_MS;
+    // Чем ближе момент удара, тем ярче акцент
+    const proximity = active ? clamp01(1 - delta / (TRAIN_BEAT_MS * 0.9)) : 0;
 
-    // Клавиша слева
-    ctx.fillStyle = active ? '#e5b54f' : '#8a7a68';
-    ctx.font = 'bold 15px "Segoe UI", sans-serif';
+    // Дорожка
+    ctx.fillStyle = active
+      ? `rgba(229,181,79,${0.16 + proximity * 0.22})`
+      : 'rgba(16,12,9,0.62)';
+    if (ctx.roundRect) {
+      ctx.beginPath(); ctx.roundRect(laneX0, y, laneW, laneH, 9); ctx.fill();
+    } else {
+      ctx.fillRect(laneX0, y, laneW, laneH);
+    }
+    // Внутренний блик
+    const laneG = ctx.createLinearGradient(laneX0, y, laneX0, y + laneH);
+    laneG.addColorStop(0, 'rgba(255,235,190,0.06)');
+    laneG.addColorStop(0.5, 'rgba(255,235,190,0)');
+    ctx.fillStyle = laneG;
+    if (ctx.roundRect) {
+      ctx.beginPath(); ctx.roundRect(laneX0, y, laneW, laneH, 9); ctx.fill();
+    }
+    // Пульс-обводка активной дорожки
+    ctx.strokeStyle = active
+      ? (nearBeat ? '#fff3c4' : `rgba(229,181,79,${0.55 + proximity * 0.4})`)
+      : 'rgba(120,100,74,0.38)';
+    ctx.lineWidth = active ? (nearBeat ? 3.5 : 2) : 1.4;
+    ctx.stroke();
+    if (active) {
+      ctx.save();
+      ctx.shadowColor = nearBeat ? 'rgba(255,243,196,0.9)' : 'rgba(229,181,79,0.6)';
+      ctx.shadowBlur = nearBeat ? 22 : 12;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Зона удара — яркая подсветка правого края, куда надо бить
+    const hitX = laneX0 + laneW - 26;
+    const zoneW = 34;
+    const zoneG = ctx.createLinearGradient(hitX - zoneW, 0, hitX, 0);
+    zoneG.addColorStop(0, 'rgba(127,209,143,0)');
+    zoneG.addColorStop(1, nearBeat ? 'rgba(180,255,190,0.55)' : 'rgba(127,209,143,0.22)');
+    ctx.fillStyle = zoneG;
+    ctx.fillRect(hitX - zoneW, y + 2, zoneW, laneH - 4);
+
+    // Клавиша слева — в рамке
+    ctx.fillStyle = active ? 'rgba(229,181,79,0.22)' : 'rgba(0,0,0,0.35)';
+    if (ctx.roundRect) {
+      ctx.beginPath(); ctx.roundRect(laneX0 - 34, y + laneH / 2 - 11, 26, 22, 5); ctx.fill();
+    } else {
+      ctx.fillRect(laneX0 - 34, y + laneH / 2 - 11, 26, 22);
+    }
+    ctx.strokeStyle = active ? 'rgba(229,181,79,0.8)' : 'rgba(120,100,74,0.45)';
+    ctx.lineWidth = 1.2;
+    if (ctx.roundRect) {
+      ctx.beginPath(); ctx.roundRect(laneX0 - 34, y + laneH / 2 - 11, 26, 22, 5); ctx.stroke();
+    }
+    ctx.fillStyle = active ? '#ffe6a8' : '#8a7a68';
+    ctx.font = 'bold 14px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(TRAIN_KEYS[i].key, laneX0 - 18, y + laneH * 0.68);
+    ctx.fillText(TRAIN_KEYS[i].key, laneX0 - 21, y + laneH * 0.68);
 
     // Линия удара
-    const hitX = laneX0 + laneW - 26;
-    ctx.strokeStyle = 'rgba(240,224,184,0.45)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = nearBeat ? 'rgba(255,243,196,0.95)' : 'rgba(240,224,184,0.42)';
+    ctx.lineWidth = nearBeat ? 3 : 2;
     ctx.beginPath();
-    ctx.moveTo(hitX, y + 2);
-    ctx.lineTo(hitX, y + laneH - 2);
+    ctx.moveTo(hitX, y + 3);
+    ctx.lineTo(hitX, y + laneH - 3);
     ctx.stroke();
+
+    // Мишень-кольцо с пульсацией: подсказывает момент нажатия
+    const ringR = nearBeat ? 13 + Math.sin(nowMs / 60) * 2.5 : 11;
+    ctx.strokeStyle = nearBeat ? '#fffbe6' : `rgba(229,181,79,${0.3 + proximity * 0.45})`;
+    ctx.lineWidth = nearBeat ? 2.6 : 1.6;
+    ctx.beginPath();
+    ctx.arc(hitX, y + laneH / 2, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+    if (nearBeat) {
+      ctx.fillStyle = 'rgba(255,251,230,0.30)';
+      ctx.beginPath();
+      ctx.arc(hitX, y + laneH / 2, ringR, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Метка бежит к линии удара
     if (g.running && i === g.lane) {
-      const p = clamp01(1 - (g.nextBeatAt - (ts || performance.now())) / TRAIN_BEAT_MS);
+      const p = clamp01(1 - (g.nextBeatAt - nowMs) / TRAIN_BEAT_MS);
       const mx = laneX0 + 16 + (hitX - laneX0 - 16) * p;
-      const near = Math.abs(g.nextBeatAt - (ts || performance.now())) <= TRAIN_WINDOW_MS;
-      ctx.fillStyle = near ? '#fff3c4' : '#e5b54f';
+      // Хвост метки
+      const tg = ctx.createLinearGradient(mx - 40, 0, mx, 0);
+      tg.addColorStop(0, 'rgba(229,181,79,0)');
+      tg.addColorStop(1, nearBeat ? 'rgba(255,243,196,0.7)' : 'rgba(229,181,79,0.45)');
+      ctx.fillStyle = tg;
+      ctx.fillRect(mx - 40, y + laneH / 2 - 3, 40, 6);
+      // Ореол
+      const haloL = ctx.createRadialGradient(mx, y + laneH / 2, 0, mx, y + laneH / 2, nearBeat ? 28 : 16);
+      haloL.addColorStop(0, nearBeat ? 'rgba(255,255,220,0.85)' : 'rgba(229,181,79,0.5)');
+      haloL.addColorStop(1, 'rgba(229,181,79,0)');
+      ctx.fillStyle = haloL;
+      ctx.beginPath(); ctx.arc(mx, y + laneH / 2, nearBeat ? 28 : 16, 0, Math.PI * 2); ctx.fill();
+      // Ядро
+      ctx.fillStyle = nearBeat ? '#fffbe6' : '#e5b54f';
       ctx.beginPath();
-      ctx.arc(mx, y + laneH / 2, near ? 11 : 8, 0, Math.PI * 2);
+      ctx.arc(mx, y + laneH / 2, nearBeat ? 11 : 8, 0, Math.PI * 2);
       ctx.fill();
-      if (near) {
-        ctx.strokeStyle = 'rgba(255,243,196,0.7)';
-        ctx.lineWidth = 2;
+      if (nearBeat) {
+        ctx.strokeStyle = 'rgba(255,243,196,0.9)';
+        ctx.lineWidth = 2.4;
         ctx.beginPath();
-        ctx.arc(mx, y + laneH / 2, 16, 0, Math.PI * 2);
+        ctx.arc(mx, y + laneH / 2, 18, 0, Math.PI * 2);
         ctx.stroke();
       }
     }
@@ -4080,10 +4543,18 @@ function trainGlad(id) {
 const WORK = {
   type: 'fishing',
   running: false,
-  pos: 0,
-  dir: 1,
-  speed: 0.85,
-  zone: [0.40, 0.60],
+  // --- рыбалка: ждём поклёвки поплавка и подсекаем в узкое окно ---
+  biteAt: 0,        // когда клюнет (ms)
+  biteWindow: 620,  // сколько длится поклёвка (ms)
+  biteActive: false,
+  nibble: 0,        // «подрагивание» поплавка перед поклёвкой
+  waitUntil: 0,
+  // --- охота: зверь бежит поперёк кадра, прицел неподвижен ---
+  targetX: 0.15,
+  targetDir: 1,
+  targetSpeed: 0.55,
+  aimTol: 0.075,
+  // --- общее ---
   caught: 0,
   attempts: 0,
   flash: 0,
@@ -4094,6 +4565,19 @@ const WORK = {
 };
 
 function workDef() { return WORK_TYPES[WORK.type] || WORK_TYPES.fishing; }
+
+// Кто из отряда лично вышел на промысел: выбранный боец, иначе первый
+// живой из отряда, иначе первый из казармы.
+function workFighter() {
+  const alive = g => g && g.hp > 0;
+  const sel = (typeof getSelectedGlad === 'function') ? getSelectedGlad() : null;
+  if (alive(sel)) return sel;
+  const squad = (STATE.squad || []).map(findFighter).filter(alive);
+  if (squad.length) return squad[0];
+  const roster = (STATE.roster || []).filter(alive);
+  if (roster.length) return roster[0];
+  return (STATE.roster || [])[0] || (STATE.dogs || [])[0] || null;
+}
 
 function renderWork() {
   const tabs = document.getElementById('work-tabs');
@@ -4111,7 +4595,10 @@ function renderWork() {
   const hint = document.getElementById('work-hint');
   if (hint) hint.textContent = workDef().hint + ' • удачных попыток: ' + WORK.caught + '/' + workDef().need;
   const btn = document.getElementById('work-btn');
-  if (btn) btn.textContent = WORK.running ? 'Подсекать!' : (WORK.caught ? 'Продолжить' : 'Начать');
+  if (btn) {
+    const act = WORK.type === 'hunting' ? 'Стрелять!' : 'Подсекать!';
+    btn.textContent = WORK.running ? act : (WORK.caught ? 'Продолжить' : 'Начать');
+  }
   startWorkAnim();
   drawWorkFrame(0);
 }
@@ -4150,57 +4637,112 @@ function stopWorkAnim() {
 
 function updateWork(dt) {
   if (!WORK.running) return;
-  WORK.pos += WORK.dir * WORK.speed * dt;
-  if (WORK.pos >= 1) { WORK.pos = 1; WORK.dir = -1; }
-  if (WORK.pos <= 0) { WORK.pos = 0; WORK.dir = 1; }
+  const now = performance.now();
+  if (WORK.type === 'hunting') {
+    // Зверь бежит поперёк кадра — нужно поймать его в прицел.
+    // Ходит по правой части сцены, чтобы не наезжать на охотника.
+    WORK.targetX += WORK.targetDir * WORK.targetSpeed * dt;
+    if (WORK.targetX >= 0.88) { WORK.targetX = 0.88; WORK.targetDir = -1; }
+    if (WORK.targetX <= 0.32) { WORK.targetX = 0.32; WORK.targetDir = 1; }
+  } else {
+    // Рыбалка: поплавок ждёт, иногда подрагивает, затем ныряет.
+    if (!WORK.biteActive && now >= WORK.biteAt) {
+      WORK.biteActive = true;
+      WORK.waitUntil = now + WORK.biteWindow;
+    }
+    if (WORK.biteActive && now > WORK.waitUntil) {
+      // Поклёвка прошла мимо — рыба ушла, ждём следующую
+      WORK.biteActive = false;
+      WORK.msg = 'Рыба ушла с крючка…';
+      WORK.biteAt = now + 1200 + Math.random() * 1800;
+    }
+    // Подрагивание за 500 мс до поклёвки
+    const untilBite = WORK.biteAt - now;
+    WORK.nibble = (!WORK.biteActive && untilBite > 0 && untilBite < 700)
+      ? Math.sin(now / 40) * (1 - untilBite / 700) : 0;
+  }
   if (WORK.flash > 0) WORK.flash = Math.max(0, WORK.flash - dt * 2.2);
+}
+
+// Награда за удачный промысел (общая для обеих мини-игр)
+function finishWork(def) {
+  WORK.running = false;
+  const gold = def.gold;
+  STATE.gold += gold;
+  const who = STATE.roster[0];
+  if (who) { who.xp += def.xp; applyLevelUps(who); }
+  STATE.day++;
+  WORK.msg = `Улов! +${gold} золота${who ? ', ' + who.name + ' +' + def.xp + ' опыта' : ''}`;
+  addToast(`${def.icon} ${def.name}: +${gold} золота`);
+  sfx('levelup');
+  updateUI();
+  if (typeof Save !== 'undefined') Save.autosave();
 }
 
 function workAction() {
   const def = workDef();
+  const now = performance.now();
   if (!WORK.running) {
     WORK.running = true;
-    WORK.pos = 0;
-    WORK.dir = 1;
     WORK.caught = 0;
     WORK.attempts = 0;
-    WORK.msg = 'Ждите нужного мгновения…';
-    // Чем больше попыток, тем шире окно — новичку не так обидно
-    WORK.zone = [0.40, 0.60];
+    WORK.targetX = 0.35;
+    WORK.targetDir = 1;
+    WORK.aimTol = 0.075;
+    WORK.biteActive = false;
+    WORK.nibble = 0;
+    // Первая поклёвка через 1.5–3 с
+    WORK.biteAt = now + 1500 + Math.random() * 1500;
+    WORK.msg = WORK.type === 'hunting' ? 'Выслеживайте зверя в прицеле…' : 'Забросили удочку. Ждите поклёвки…';
     sfx('click');
     renderWork();
     return;
   }
   WORK.attempts++;
-  const inZone = WORK.pos >= WORK.zone[0] && WORK.pos <= WORK.zone[1];
-  if (inZone) {
+
+  if (WORK.type === 'hunting') {
+    // Охота: успех, если зверь в перекрестии
+    const hit = Math.abs(WORK.targetX - 0.5) <= WORK.aimTol;
+    if (hit) {
+      WORK.caught++;
+      WORK.flash = 1; WORK.flashKind = 'good';
+      sfx('coin');
+      if (WORK.caught >= def.need) finishWork(def);
+      else {
+        WORK.msg = `Попадание! ${WORK.caught}/${def.need}`;
+        WORK.targetSpeed = Math.min(1.15, WORK.targetSpeed + 0.18);
+      }
+    } else {
+      WORK.flash = 1; WORK.flashKind = 'bad';
+      sfx('miss');
+      WORK.msg = 'Мимо — зверь ушёл в сторону…';
+      WORK.aimTol = Math.max(0.035, WORK.aimTol - 0.008);
+    }
+    renderWork();
+    return;
+  }
+
+  // Рыбалка: подсечка. Успех только если поплавок сейчас нырнул.
+  if (WORK.biteActive) {
     WORK.caught++;
-    WORK.flash = 1;
-    WORK.flashKind = 'good';
+    WORK.flash = 1; WORK.flashKind = 'good';
+    WORK.biteActive = false;
     sfx('coin');
     if (WORK.caught >= def.need) {
-      WORK.running = false;
-      const gold = def.gold;
-      STATE.gold += gold;
-      const who = STATE.roster[0];
-      if (who) { who.xp += def.xp; applyLevelUps(who); }
-      STATE.day++;
-      WORK.msg = `Улов! +${gold} золота${who ? ', ' + who.name + ' +' + def.xp + ' опыта' : ''}`;
-      addToast(`${def.icon} ${def.name}: +${gold} золота`);
-      sfx('levelup');
-      updateUI();
-      if (typeof Save !== 'undefined') Save.autosave();
+      finishWork(def);
     } else {
-      WORK.msg = `Есть! ${WORK.caught}/${def.need}`;
+      WORK.msg = `Подсекли! ${WORK.caught}/${def.need}`;
+      // Следующая поклёвка чуть короче — азарт
+      WORK.biteWindow = Math.max(380, WORK.biteWindow - 40);
+      WORK.biteAt = now + 1200 + Math.random() * 1600;
     }
   } else {
-    WORK.flash = 1;
-    WORK.flashKind = 'bad';
+    WORK.flash = 1; WORK.flashKind = 'bad';
     sfx('miss');
-    WORK.msg = 'Сорвалось…';
-    // Неудача сужает окно чуть-чуть, но не больше предела
-    WORK.zone = [WORK.zone[0] + 0.02, WORK.zone[1] - 0.02];
-    if (WORK.zone[1] - WORK.zone[0] < 0.1) WORK.zone = [0.45, 0.55];
+    WORK.msg = 'Рано! Рыба ещё не клюнула.';
+    // За раннюю подсечку поплавок «перезабрасывается»
+    WORK.biteAt = now + 1200 + Math.random() * 1600;
+    WORK.biteActive = false;
   }
   renderWork();
 }
@@ -4215,6 +4757,454 @@ document.addEventListener('keydown', e => {
   workAction();
 });
 
+// ==================== ФОНЫ ПРОМЫСЛА ====================
+// Рыбалка: закат над заливом, лодка с удочкой, поплавок, чайки, камыши.
+function drawFishingBackdrop(ctx, W, H, t) {
+  const seaY = H * 0.52;
+
+  // Небо
+  const sky = ctx.createLinearGradient(0, 0, 0, seaY);
+  sky.addColorStop(0, '#2e4460');
+  sky.addColorStop(0.5, '#7a6c76');
+  sky.addColorStop(0.85, '#d09a6e');
+  sky.addColorStop(1, '#f0c088');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, seaY);
+
+  // Солнце и отражение
+  const sx = W * 0.66, sy = seaY - H * 0.13;
+  const halo = ctx.createRadialGradient(sx, sy, 0, sx, sy, H * 0.30);
+  halo.addColorStop(0, 'rgba(255,235,180,0.6)');
+  halo.addColorStop(0.4, 'rgba(255,200,130,0.2)');
+  halo.addColorStop(1, 'rgba(255,180,110,0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(sx - H * 0.33, sy - H * 0.33, H * 0.66, H * 0.66);
+  ctx.fillStyle = 'rgba(255,246,214,0.9)';
+  ctx.beginPath(); ctx.arc(sx, sy, H * 0.05, 0, Math.PI * 2); ctx.fill();
+
+  // Дальние горы
+  ctx.fillStyle = 'rgba(86,92,110,0.55)';
+  ctx.beginPath();
+  ctx.moveTo(0, seaY);
+  ctx.lineTo(W * 0.10, seaY - H * 0.10);
+  ctx.lineTo(W * 0.20, seaY - H * 0.03);
+  ctx.lineTo(W * 0.34, seaY - H * 0.12);
+  ctx.lineTo(W * 0.46, seaY - H * 0.02);
+  ctx.lineTo(W * 0.60, seaY - H * 0.09);
+  ctx.lineTo(W * 0.72, seaY - H * 0.01);
+  ctx.lineTo(W, seaY - H * 0.06);
+  ctx.lineTo(W, seaY);
+  ctx.closePath();
+  ctx.fill();
+
+  // Чайки
+  ctx.strokeStyle = 'rgba(250,250,250,0.6)';
+  ctx.lineWidth = 1.6;
+  for (let i = 0; i < 3; i++) {
+    const bx = W * (0.20 + i * 0.13) + Math.sin(t * 0.5 + i) * 14;
+    const by = H * (0.14 + i * 0.05) + Math.sin(t * 1.1 + i * 2) * 5;
+    ctx.beginPath();
+    ctx.moveTo(bx - 7, by); ctx.quadraticCurveTo(bx - 3, by - 4, bx, by);
+    ctx.quadraticCurveTo(bx + 3, by - 4, bx + 7, by);
+    ctx.stroke();
+  }
+
+  // Море
+  const sea = ctx.createLinearGradient(0, seaY, 0, H);
+  sea.addColorStop(0, '#3e6f8e');
+  sea.addColorStop(0.45, '#2b5470');
+  sea.addColorStop(1, '#16303f');
+  ctx.fillStyle = sea;
+  ctx.fillRect(0, seaY, W, H - seaY);
+
+  // Дорожка отражения солнца
+  ctx.save();
+  ctx.globalAlpha = 0.28;
+  const refl = ctx.createLinearGradient(sx, seaY, sx, H);
+  refl.addColorStop(0, 'rgba(255,220,150,0.9)');
+  refl.addColorStop(1, 'rgba(255,200,120,0)');
+  ctx.fillStyle = refl;
+  ctx.beginPath();
+  ctx.moveTo(sx - W * 0.03, seaY);
+  ctx.lineTo(sx + W * 0.03, seaY);
+  ctx.lineTo(sx + W * 0.10, H);
+  ctx.lineTo(sx - W * 0.10, H);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Волны — гребни с бликами
+  for (let i = 0; i < 9; i++) {
+    const y = seaY + 8 + i * (H - seaY) / 9;
+    const amp = 1.6 + i * 0.35;
+    ctx.strokeStyle = `rgba(200,230,245,${0.10 + i * 0.022})`;
+    ctx.lineWidth = 1.4 + i * 0.16;
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 14) {
+      const yy = y + Math.sin(x * 0.018 + t * (0.9 + i * 0.12) + i) * amp;
+      x === 0 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
+    }
+    ctx.stroke();
+  }
+
+  // Камыши на переднем плане слева
+  ctx.strokeStyle = 'rgba(58,74,42,0.85)';
+  for (let i = 0; i < 12; i++) {
+    const bx = W * 0.01 + i * W * 0.014;
+    const bh = H * (0.10 + (i % 4) * 0.03);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(bx, H);
+    ctx.quadraticCurveTo(bx + Math.sin(t * 0.8 + i) * 6, H - bh * 0.6, bx + Math.sin(t * 0.8 + i) * 12, H - bh);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(96,74,44,0.9)';
+    ctx.beginPath();
+    ctx.ellipse(bx + Math.sin(t * 0.8 + i) * 12, H - bh, 2, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Лодка с рыбаком
+  const boatX = W * 0.30, boatY = H * 0.70 + Math.sin(t * 1.1) * 2.5;
+  // Тень на воде
+  ctx.fillStyle = 'rgba(10,25,35,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(boatX + 20, boatY + 16, 76, 10, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Корпус
+  const hull = ctx.createLinearGradient(0, boatY - 10, 0, boatY + 14);
+  hull.addColorStop(0, '#8a6138');
+  hull.addColorStop(1, '#4e3520');
+  ctx.fillStyle = hull;
+  ctx.beginPath();
+  ctx.moveTo(boatX - 78, boatY - 4);
+  ctx.quadraticCurveTo(boatX, boatY + 26, boatX + 78, boatY - 4);
+  ctx.lineTo(boatX + 62, boatY - 12);
+  ctx.lineTo(boatX - 62, boatY - 12);
+  ctx.closePath();
+  ctx.fill();
+  // Борт
+  ctx.strokeStyle = 'rgba(210,180,130,0.5)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(boatX - 62, boatY - 12); ctx.lineTo(boatX + 62, boatY - 12);
+  ctx.stroke();
+  // Боец отряда в лодке — это он лично вышел на промысел
+  const fisher = workFighter();
+  if (fisher) {
+    drawWorkActor(ctx, fisher, boatX - 2, boatY + 10, 0.50, 'rod');
+    // Передний борт поверх ног — боец «сидит» в лодке
+    const front = ctx.createLinearGradient(0, boatY - 6, 0, boatY + 12);
+    front.addColorStop(0, '#9a6f42');
+    front.addColorStop(1, '#4e3520');
+    ctx.fillStyle = front;
+    ctx.beginPath();
+    ctx.moveTo(boatX - 62, boatY - 12);
+    ctx.quadraticCurveTo(boatX, boatY + 24, boatX + 62, boatY - 12);
+    ctx.lineTo(boatX + 58, boatY - 4);
+    ctx.quadraticCurveTo(boatX, boatY + 14, boatX - 58, boatY - 4);
+    ctx.closePath();
+    ctx.fill();
+    drawWorkNameplate(ctx, fisher, boatX, boatY - 88);
+  }
+  // Удочка
+  const rodHandX = boatX + 6, rodHandY = boatY - 12;
+  ctx.strokeStyle = '#c9b48a';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(rodHandX, rodHandY);
+  ctx.lineTo(boatX + 44, boatY - 44);
+  ctx.stroke();
+  // Леска и поплавок
+  const bobX = boatX + 66 + Math.sin(t * 1.4) * 5;
+  const bobY = boatY + 6 + Math.sin(t * 2.2) * 3;
+  ctx.strokeStyle = 'rgba(235,242,250,0.45)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(boatX + 44, boatY - 44);
+  ctx.quadraticCurveTo(boatX + 62, boatY - 26, bobX, bobY);
+  ctx.stroke();
+  // Круги на воде от поплавка
+  if (WORK.running) {
+    ctx.strokeStyle = `rgba(220,240,250,${0.30 + Math.sin(t * 4) * 0.12})`;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.ellipse(bobX, bobY + 2, 14, 4, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(bobX, bobY + 2, 24, 6, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.fillStyle = WORK.running ? '#ffd166' : '#c05040';
+  ctx.beginPath(); ctx.arc(bobX, bobY, 5.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.beginPath(); ctx.arc(bobX - 1.5, bobY - 1.5, 1.8, 0, Math.PI * 2); ctx.fill();
+}
+
+// Охота: густой лес на рассвете, лучи света, зверь у кустов, лучник.
+function drawHuntingBackdrop(ctx, W, H, t) {
+  const groundY = H * 0.62;
+
+  // Небо сквозь кроны
+  const sky = ctx.createLinearGradient(0, 0, 0, groundY);
+  sky.addColorStop(0, '#7f9a6a');
+  sky.addColorStop(0.6, '#c9c08a');
+  sky.addColorStop(1, '#e0cf9a');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, groundY);
+
+  // Лучи света сквозь листву
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 5; i++) {
+    const bx = W * (0.15 + i * 0.18);
+    const g = ctx.createLinearGradient(bx, 0, bx + W * 0.10, groundY);
+    g.addColorStop(0, 'rgba(255,244,190,0.20)');
+    g.addColorStop(1, 'rgba(255,244,190,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(bx - 16, 0);
+    ctx.lineTo(bx + 16, 0);
+    ctx.lineTo(bx + W * 0.09 + 30, groundY);
+    ctx.lineTo(bx + W * 0.09 - 30, groundY);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Дальние деревья (силуэты)
+  ctx.fillStyle = 'rgba(58,80,52,0.65)';
+  for (let i = 0; i < 9; i++) {
+    const x = 20 + i * (W - 40) / 9 + Math.sin(i * 2.7) * 16;
+    const h = H * (0.30 + (i % 3) * 0.07);
+    ctx.beginPath();
+    ctx.moveTo(x, groundY - h);
+    ctx.lineTo(x - 30, groundY);
+    ctx.lineTo(x + 30, groundY);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Земля
+  const gnd = ctx.createLinearGradient(0, groundY, 0, H);
+  gnd.addColorStop(0, '#5e7440');
+  gnd.addColorStop(0.4, '#4c6236');
+  gnd.addColorStop(1, '#2e3f22');
+  ctx.fillStyle = gnd;
+  ctx.fillRect(0, groundY, W, H - groundY);
+
+  // Пятна мха и тени
+  ctx.save();
+  ctx.globalAlpha = 0.25;
+  for (let i = 0; i < 7; i++) {
+    ctx.fillStyle = i % 2 ? 'rgba(30,44,22,0.7)' : 'rgba(140,160,90,0.4)';
+    ctx.beginPath();
+    ctx.ellipse(W * (0.08 + i * 0.13), groundY + H * (0.10 + (i % 3) * 0.08), W * 0.09, H * 0.022, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // Крупные деревья на переднем плане
+  drawBigTree(ctx, W * 0.045, groundY, H * 0.52);
+  drawBigTree(ctx, W * 0.965, groundY, H * 0.44);
+
+  // Кусты, из которых выходит зверь
+  const bushX = W * 0.62;
+  ctx.fillStyle = '#2a4024';
+  ctx.beginPath(); ctx.ellipse(bushX - 30, groundY + 6, 62, 26, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#33502c';
+  ctx.beginPath(); ctx.ellipse(bushX + 40, groundY + 10, 56, 22, 0, 0, Math.PI * 2); ctx.fill();
+
+  // Зверь рисуется отдельно в drawHuntingOverlay — здесь только кусты.
+
+  // Боец отряда с луком — он лично охотится
+  const hunter = workFighter();
+  if (hunter) {
+    drawWorkActor(ctx, hunter, W * 0.16, groundY + 26, 0.62, 'bow');
+    drawWorkNameplate(ctx, hunter, W * 0.16, groundY - 66);
+  }
+}
+
+// Рисует бойца промысла с нужным орудием в руках:
+//   'rod' — удочка (рыбалка), 'bow' — лук (охота).
+function drawWorkActor(ctx, glad, x, y, scale, tool) {
+  // Лук: подменяем оружие на охотничий лук, чтобы рендерер нарисовал
+  // его в руке и включил позу лучника.
+  let actor = glad;
+  if (tool === 'bow') {
+    const bowItem = (typeof itemById === 'function') ? (itemById('wpn_shortbow') || null) : null;
+    if (bowItem && !glad.isDog) {
+      actor = Object.assign({}, glad, {
+        equip: Object.assign({}, glad.equip, { weapon: bowItem })
+      });
+    }
+  }
+  // Удочка: убираем боевое оружие (чтобы не торчал меч) — саму удочку
+  // рисуем поверх, в руке.
+  if (tool === 'rod' && !glad.isDog) {
+    actor = Object.assign({}, glad, {
+      equip: Object.assign({}, glad.equip, { weapon: null, offhand: null })
+    });
+  }
+  drawBattleBrother(ctx, actor, x, y, scale, 1, {
+    walk: 0,
+    breath: 1.1,
+    aim: tool === 'bow' && WORK.running ? 1 : 0,
+    emotion: tool === 'bow' ? 'angry' : 'idle'
+  });
+}
+
+// Табличка с именем бойца, который вышел на промысел
+function drawWorkNameplate(ctx, g, x, y) {
+  if (!g || !g.name) return;
+  const label = (g.isDog ? '🐕 ' : '') + g.name;
+  ctx.save();
+  ctx.font = 'bold 10px "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  const w = ctx.measureText(label).width + 16;
+  ctx.fillStyle = 'rgba(12,10,8,0.72)';
+  if (ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(x - w / 2, y - 11, w, 20, 5); ctx.fill();
+  } else {
+    ctx.fillRect(x - w / 2, y - 11, w, 20);
+  }
+  ctx.strokeStyle = 'rgba(229,181,79,0.45)';
+  ctx.lineWidth = 1;
+  if (ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(x - w / 2, y - 11, w, 20, 5); ctx.stroke();
+  }
+  ctx.fillStyle = '#ffe0a8';
+  ctx.fillText(label, x, y + 3);
+  ctx.restore();
+}
+
+// Большое дерево у края кадра
+function drawBigTree(ctx, x, baseY, h) {
+  const trunkW = Math.max(10, h * 0.10);
+  const g = ctx.createLinearGradient(x - trunkW / 2, 0, x + trunkW / 2, 0);
+  g.addColorStop(0, '#241a10');
+  g.addColorStop(0.45, '#4a3520');
+  g.addColorStop(1, '#1c140c');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(x - trunkW / 2, baseY);
+  ctx.lineTo(x - trunkW * 0.32, baseY - h);
+  ctx.lineTo(x + trunkW * 0.32, baseY - h);
+  ctx.lineTo(x + trunkW / 2, baseY);
+  ctx.closePath();
+  ctx.fill();
+  // Ветви и крона
+  ctx.fillStyle = 'rgba(38,58,32,0.92)';
+  for (let i = 0; i < 5; i++) {
+    const cx = x + (i - 2) * trunkW * 1.5;
+    const cy = baseY - h * (0.72 + (i % 2) * 0.12);
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, trunkW * 2.1, trunkW * 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+// Охота: движущийся зверь в кадре и прицел, следующий за курсором-центром.
+function drawHuntingOverlay(ctx, W, H, t) {
+  const groundY = H * 0.62;
+  const zx = W * WORK.targetX;
+  const zy = groundY - 6;
+  const aimed = WORK.running && Math.abs(WORK.targetX - 0.5) <= WORK.aimTol;
+
+  // Тень зверя
+  ctx.fillStyle = 'rgba(20,30,16,0.35)';
+  ctx.beginPath();
+  ctx.ellipse(zx, zy + 2, 30, 7, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Зверь: ноги, тело, шея, голова, рога, хвост
+  const run = Math.sin(t * 9) * 3;
+  ctx.strokeStyle = '#6a4a28';
+  ctx.lineWidth = 3.6;
+  ctx.beginPath();
+  ctx.moveTo(zx - 16, zy - 10); ctx.lineTo(zx - 18 + run, zy);
+  ctx.moveTo(zx - 4, zy - 10); ctx.lineTo(zx - 2 - run, zy);
+  ctx.moveTo(zx + 10, zy - 10); ctx.lineTo(zx + 12 + run, zy);
+  ctx.moveTo(zx + 18, zy - 10); ctx.lineTo(zx + 20 - run, zy);
+  ctx.stroke();
+
+  ctx.fillStyle = aimed ? '#c08a4e' : '#8a5f34';
+  ctx.beginPath(); ctx.ellipse(zx, zy - 24, 28, 14, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(zx + 24, zy - 38, 7.5, 14, -0.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(zx + 32, zy - 50, 10, 6.5, 0.3, 0, Math.PI * 2); ctx.fill();
+
+  // Рога
+  ctx.strokeStyle = '#c9b48a';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(zx + 34, zy - 55); ctx.lineTo(zx + 41, zy - 68);
+  ctx.moveTo(zx + 41, zy - 68); ctx.lineTo(zx + 35, zy - 75);
+  ctx.moveTo(zx + 29, zy - 56); ctx.lineTo(zx + 22, zy - 69);
+  ctx.moveTo(zx + 22, zy - 69); ctx.lineTo(zx + 28, zy - 76);
+  ctx.stroke();
+
+  // Хвост
+  ctx.fillStyle = '#f0e6d0';
+  ctx.beginPath(); ctx.ellipse(zx - 28, zy - 28, 5.5, 4.5, 0, 0, Math.PI * 2); ctx.fill();
+
+  // Подсветка зверя, когда он в зоне прицела (сама шкала внизу показывает момент)
+  if (aimed) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const gl = ctx.createRadialGradient(zx, zy - 30, 0, zx, zy - 30, 62);
+    gl.addColorStop(0, 'rgba(255,240,180,0.28)');
+    gl.addColorStop(1, 'rgba(255,240,180,0)');
+    ctx.fillStyle = gl;
+    ctx.beginPath(); ctx.arc(zx, zy - 30, 62, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// Рыбалка: поплавок, который ныряет при поклёвке, и индикатор «!» над водой.
+function drawFishingOverlay(ctx, W, H, t) {
+  const bobX = W * 0.36 + Math.sin(t * 1.4) * 5;
+  const baseY = H * 0.72;
+  // Во время поклёвки поплавок уходит под воду; перед ней — мелко дрожит
+  const dip = WORK.biteActive ? 14 : 0;
+  const bobY = baseY + Math.sin(t * 2.2) * 3 + WORK.nibble * 3 + dip;
+
+  // Круги на воде
+  if (WORK.biteActive) {
+    ctx.strokeStyle = 'rgba(220,245,255,0.55)';
+    for (let i = 0; i < 2; i++) {
+      const ph = ((t * 1.6 + i * 0.5) % 1);
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.ellipse(bobX, baseY + 4, 10 + ph * 34, 3 + ph * 9, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  // Поплавок: красно-белый
+  ctx.save();
+  ctx.translate(bobX, bobY);
+  ctx.fillStyle = '#c05040';
+  ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#f2ede0';
+  ctx.beginPath(); ctx.arc(0, 0, 6, Math.PI, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(20,26,32,0.6)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#2c2418';
+  ctx.fillRect(-1, -12, 2, 7);
+  ctx.restore();
+
+  // Восклицательный знак над поплавком в момент поклёвки
+  if (WORK.biteActive) {
+    const bob = Math.sin(t * 16) * 3;
+    ctx.save();
+    ctx.translate(bobX, bobY - 34 + bob);
+    ctx.fillStyle = '#ffe066';
+    ctx.strokeStyle = 'rgba(40,26,10,0.85)';
+    ctx.lineWidth = 2.4;
+    ctx.font = 'bold 26px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.strokeText('!', 0, 0);
+    ctx.fillText('!', 0, 0);
+    ctx.restore();
+  }
+}
+
 function drawWorkFrame(dt) {
   const cv = document.getElementById('workCanvas');
   if (!cv) return;
@@ -4227,139 +5217,151 @@ function drawWorkFrame(dt) {
   ctx.clearRect(0, 0, W, H);
 
   // Фон: море или лес
-  if (fishing) {
-    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.5);
-    sky.addColorStop(0, '#4a6a86');
-    sky.addColorStop(1, '#c9a97a');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, H * 0.5);
-    const sea = ctx.createLinearGradient(0, H * 0.42, 0, H);
-    sea.addColorStop(0, '#3a6a8a');
-    sea.addColorStop(1, '#1e3a52');
-    ctx.fillStyle = sea;
-    ctx.fillRect(0, H * 0.42, W, H * 0.58);
-    // Волны
-    ctx.strokeStyle = 'rgba(200,230,245,0.22)';
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 6; i++) {
-      const y = H * 0.5 + i * 20;
-      ctx.beginPath();
-      for (let x = 0; x <= W; x += 12) {
-        const yy = y + Math.sin((x * 0.02) + t * 1.2 + i) * 3;
-        x === 0 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
-      }
-      ctx.stroke();
-    }
-    // Лодка
-    ctx.fillStyle = '#6a4a2e';
-    ctx.beginPath();
-    ctx.moveTo(W * 0.18, H * 0.62);
-    ctx.quadraticCurveTo(W * 0.30, H * 0.74, W * 0.44, H * 0.62);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = '#c9b48a';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(W * 0.31, H * 0.63);
-    ctx.lineTo(W * 0.31, H * 0.36);
-    ctx.stroke();
-    // Леска и поплавок
-    const bobX = W * 0.31 + 60 + Math.sin(t * 1.4) * 6;
-    const bobY = H * 0.66 + Math.sin(t * 2.2) * 4;
-    ctx.strokeStyle = 'rgba(230,240,250,0.5)';
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    ctx.moveTo(W * 0.31, H * 0.36);
-    ctx.quadraticCurveTo(bobX, H * 0.46, bobX, bobY);
-    ctx.stroke();
-    ctx.fillStyle = WORK.running ? '#e5b54f' : '#c05040';
-    ctx.beginPath();
-    ctx.arc(bobX, bobY, 6, 0, Math.PI * 2);
-    ctx.fill();
-  } else {
-    const sky = ctx.createLinearGradient(0, 0, 0, H * 0.55);
-    sky.addColorStop(0, '#6a8a5a');
-    sky.addColorStop(1, '#d8c48a');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, H * 0.55);
-    // Деревья
-    for (let i = 0; i < 7; i++) {
-      const x = 40 + i * (W - 80) / 7 + Math.sin(i * 3.1) * 14;
-      const h = H * (0.22 + (i % 3) * 0.05);
-      ctx.fillStyle = '#3a5236';
-      ctx.beginPath();
-      ctx.moveTo(x, H * 0.60 - h);
-      ctx.lineTo(x - 34, H * 0.60);
-      ctx.lineTo(x + 34, H * 0.60);
-      ctx.closePath();
-      ctx.fill();
-      ctx.fillStyle = '#4a3520';
-      ctx.fillRect(x - 5, H * 0.58, 10, 16);
-    }
-    ctx.fillStyle = '#4a6a3a';
-    ctx.fillRect(0, H * 0.58, W, H * 0.42);
-    ctx.fillStyle = 'rgba(30,50,25,0.25)';
-    for (let i = 0; i < 5; i++) {
-      ctx.beginPath();
-      ctx.ellipse(W * (0.12 + i * 0.2), H * 0.86, 60, 14, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // Кусты, из которых выходит зверь
-    ctx.fillStyle = '#2e4a2c';
-    ctx.beginPath();
-    ctx.ellipse(W * 0.62, H * 0.66, 90, 34, 0, 0, Math.PI * 2);
-    ctx.fill();
-    if (WORK.running) {
-      const px = W * 0.62 + Math.sin(t * 2) * 8;
-      ctx.fillStyle = '#7a5230';
-      ctx.beginPath();
-      ctx.ellipse(px, H * 0.64, 26, 15, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#5a3a20';
-      ctx.beginPath();
-      ctx.arc(px + 24, H * 0.60, 9, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#5a3a20';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(px + 28, H * 0.575); ctx.lineTo(px + 34, H * 0.545);
-      ctx.moveTo(px + 20, H * 0.575); ctx.lineTo(px + 16, H * 0.545);
-      ctx.stroke();
-    }
-    // Лучник
-    ctx.fillStyle = '#3a2a18';
-    ctx.fillRect(W * 0.24, H * 0.60, 8, 34);
-    ctx.beginPath();
-    ctx.arc(W * 0.244, H * 0.585, 10, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  if (fishing) drawFishingBackdrop(ctx, W, H, t);
+  else drawHuntingBackdrop(ctx, W, H, t);
+
+  // Охота: прицел и движущийся зверь — механика отличается от рыбалки
+  if (!fishing) drawHuntingOverlay(ctx, W, H, t);
+  else drawFishingOverlay(ctx, W, H, t);
 
   // --- Полоса «поймай момент» ---
   const barX = W * 0.10;
   const barW = W * 0.80;
-  const barY = H * 0.90;
-  const barH = 18;
-  ctx.fillStyle = 'rgba(10,10,12,0.6)';
-  ctx.fillRect(barX - 4, barY - 4, barW + 8, barH + 8);
-  ctx.fillStyle = '#20262e';
-  ctx.fillRect(barX, barY, barW, barH);
-  // Зона
-  const zx = barX + barW * WORK.zone[0];
-  const zw = barW * (WORK.zone[1] - WORK.zone[0]);
+  const barY = H * 0.86;
+  const barH = 20;
+
+  // Панель-подложка под полосой
+  ctx.fillStyle = 'rgba(12,10,8,0.72)';
+  if (ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(barX - 26, barY - 30, barW + 52, barH + 52, 10); ctx.fill();
+  } else {
+    ctx.fillRect(barX - 26, barY - 30, barW + 52, barH + 52);
+  }
+  ctx.strokeStyle = 'rgba(229,181,79,0.35)';
+  ctx.lineWidth = 1.5;
+  if (ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(barX - 26, barY - 30, barW + 52, barH + 52, 10); ctx.stroke();
+  }
+
+  // Заголовок панели и индикатор улова
+  ctx.font = 'bold 10px "Segoe UI", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(229,181,79,0.9)';
+  ctx.fillText(fishing ? 'ПОКЛЁВКА' : 'ПРИЦЕЛ', barX, barY - 12);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(200,190,170,0.75)';
+  ctx.fillText(`${WORK.caught}/${def.need}`, barX + barW, barY - 12);
+  // Точки улова
+  const dotR = 3.4;
+  for (let i = 0; i < def.need; i++) {
+    const dx = barX + barW - 44 - i * 11;
+    ctx.beginPath();
+    ctx.arc(dx, barY - 15, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = i < WORK.caught ? '#8fd19e' : 'rgba(120,110,95,0.55)';
+    ctx.fill();
+  }
+
+  // --- Рыбалка: панель состояния поклёвки (не шкала) ---
+  if (fishing) {
+    drawFishingPanel(ctx, W, H, barX, barW, barY, barH);
+    // Вспышка результата
+    if (WORK.flash > 0) {
+      ctx.fillStyle = WORK.flashKind === 'good'
+        ? `rgba(150,230,150,${WORK.flash * 0.20})`
+        : `rgba(220,90,70,${WORK.flash * 0.20})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    drawWorkCaption(ctx, W, H, def, fishing);
+    return;
+  }
+
+  // Трек
+  ctx.fillStyle = '#161c22';
+  if (ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, barH / 2); ctx.fill();
+  } else {
+    ctx.fillRect(barX, barY, barW, barH);
+  }
+  ctx.strokeStyle = 'rgba(90,70,48,0.7)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Деления
+  ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+  for (let i = 1; i < 10; i++) {
+    const gx = barX + barW * (i / 10);
+    ctx.beginPath(); ctx.moveTo(gx, barY + 3); ctx.lineTo(gx, barY + barH - 3); ctx.stroke();
+  }
+
+  // Зона прицела охоты: допуск вокруг центра
+  let zx = barX + barW * (0.5 - WORK.aimTol);
+  let zw = barW * WORK.aimTol * 2;
   const zoneGrad = ctx.createLinearGradient(zx, 0, zx + zw, 0);
-  zoneGrad.addColorStop(0, 'rgba(120,200,120,0.45)');
-  zoneGrad.addColorStop(0.5, 'rgba(150,230,150,0.9)');
-  zoneGrad.addColorStop(1, 'rgba(120,200,120,0.45)');
+  zoneGrad.addColorStop(0, 'rgba(90,170,110,0.35)');
+  zoneGrad.addColorStop(0.5, 'rgba(150,230,150,0.95)');
+  zoneGrad.addColorStop(1, 'rgba(90,170,110,0.35)');
   ctx.fillStyle = zoneGrad;
-  ctx.fillRect(zx, barY, zw, barH);
-  // Метка
-  const mx = barX + barW * WORK.pos;
-  ctx.fillStyle = WORK.running ? '#fff3c4' : '#8a8a92';
-  ctx.fillRect(mx - 3, barY - 7, 6, barH + 14);
-  ctx.fillStyle = 'rgba(255,243,196,0.35)';
-  ctx.beginPath();
-  ctx.arc(mx, barY + barH / 2, 13, 0, Math.PI * 2);
-  ctx.fill();
+  if (ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(zx, barY + 1, zw, barH - 2, (barH - 2) / 2); ctx.fill();
+  } else {
+    ctx.fillRect(zx, barY + 1, zw, barH - 2);
+  }
+  // Свечение зоны
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const zg = ctx.createRadialGradient(zx + zw / 2, barY + barH / 2, 0, zx + zw / 2, barY + barH / 2, Math.max(zw, 40) * 0.9);
+  zg.addColorStop(0, 'rgba(150,230,150,0.28)');
+  zg.addColorStop(1, 'rgba(150,230,150,0)');
+  ctx.fillStyle = zg;
+  ctx.fillRect(zx - zw, barY - barH, zw * 3, barH * 3);
+  ctx.restore();
+
+  {
+    // --- Охота: зверь бежит по шкале, прицел в центре ---
+    const tx = barX + barW * WORK.targetX;
+    const aimed = Math.abs(WORK.targetX - 0.5) <= WORK.aimTol;
+
+    // Хвост зверя
+    const tail = ctx.createLinearGradient(tx - WORK.targetDir * 34, 0, tx, 0);
+    tail.addColorStop(0, 'rgba(200,150,90,0)');
+    tail.addColorStop(1, 'rgba(200,150,90,0.55)');
+    ctx.fillStyle = tail;
+    ctx.fillRect(Math.min(tx, tx - WORK.targetDir * 34), barY + barH / 2 - 3, 34, 6);
+
+    // Фигура зверя
+    ctx.fillStyle = aimed ? '#ffd9a0' : '#c9a06a';
+    ctx.beginPath();
+    ctx.ellipse(tx, barY + barH / 2, 9, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(tx + WORK.targetDir * 8, barY + barH / 2 - 4, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Прицел в центре (неподвижный)
+    const cx = barX + barW * 0.5, cy = barY + barH / 2;
+    ctx.strokeStyle = aimed ? '#fffbe6' : 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = aimed ? 2.6 : 1.8;
+    ctx.beginPath(); ctx.arc(cx, cy, 14, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(cx - 20, cy); ctx.lineTo(cx - 6, cy);
+    ctx.moveTo(cx + 6, cy); ctx.lineTo(cx + 20, cy);
+    ctx.moveTo(cx, cy - 20); ctx.lineTo(cx, cy - 6);
+    ctx.moveTo(cx, cy + 6); ctx.lineTo(cx, cy + 20);
+    ctx.stroke();
+    if (aimed) {
+      ctx.strokeStyle = 'rgba(255,251,230,0.9)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(cx, cy, 19, 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+
+  // Подсказка под полосой
+  ctx.font = '10px "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(200,190,170,0.7)';
+  ctx.fillText(!WORK.running ? 'нажмите «Начать»'
+    : 'жмите Пробел или кнопку, когда зверь в перекрестии',
+    W / 2, barY + barH + 15);
 
   // Вспышка результата
   if (WORK.flash > 0) {
@@ -4369,7 +5371,74 @@ function drawWorkFrame(dt) {
     ctx.fillRect(0, 0, W, H);
   }
 
-  // Сообщение
+  drawWorkCaption(ctx, W, H, def, fishing);
+}
+
+// Рыбалка: панель состояния поклёвки вместо шкалы «поймай момент».
+// Пока рыба не клюёт, полоса спокойная и медленно пульсирует; в момент
+// поклёвки она вспыхивает зелёным и тает по мере того, как уходит окно
+// подсечки. Так игрок видит не позицию метки, а именно время реакции.
+function drawFishingPanel(ctx, W, H, barX, barW, barY, barH) {
+  const now = performance.now();
+  const active = !!WORK.biteActive;
+  const left = active ? Math.max(0, WORK.waitUntil - now) : 0;
+  const k = active ? Math.max(0, Math.min(1, left / Math.max(1, WORK.biteWindow))) : 0;
+
+  // Дорожка
+  ctx.fillStyle = '#161c22';
+  if (ctx.roundRect) {
+    ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, barH / 2); ctx.fill();
+  } else {
+    ctx.fillRect(barX, barY, barW, barH);
+  }
+  ctx.strokeStyle = active ? 'rgba(150,230,150,0.85)' : 'rgba(90,70,48,0.7)';
+  ctx.lineWidth = active ? 2 : 1;
+  ctx.stroke();
+
+  if (active) {
+    // Окно подсечки тает справа налево
+    const zw = barW * k;
+    const zg = ctx.createLinearGradient(barX, 0, barX + Math.max(1, zw), 0);
+    zg.addColorStop(0, 'rgba(120,220,140,0.55)');
+    zg.addColorStop(1, 'rgba(180,255,190,0.95)');
+    ctx.fillStyle = zg;
+    if (ctx.roundRect) {
+      ctx.beginPath(); ctx.roundRect(barX + 1, barY + 1, Math.max(2, zw - 2), barH - 2, (barH - 2) / 2); ctx.fill();
+    } else {
+      ctx.fillRect(barX + 1, barY + 1, Math.max(2, zw - 2), barH - 2);
+    }
+    // Пульсирующий блик по всей полосе — «клюёт!»
+    const pulse = 0.35 + 0.35 * Math.sin(now / 90);
+    ctx.fillStyle = `rgba(200,255,205,${pulse * 0.18})`;
+    ctx.fillRect(barX, barY, barW, barH);
+  } else {
+    // Спокойное ожидание: бегущий отблеск, чтобы полоса не выглядела мёртвой
+    const p = (now / 2600) % 1;
+    const cx = barX + barW * p;
+    const wg = ctx.createLinearGradient(cx - 90, 0, cx + 90, 0);
+    wg.addColorStop(0, 'rgba(255,235,190,0)');
+    wg.addColorStop(0.5, 'rgba(255,235,190,0.10)');
+    wg.addColorStop(1, 'rgba(255,235,190,0)');
+    ctx.fillStyle = wg;
+    ctx.fillRect(barX, barY, barW, barH);
+  }
+
+  // Подпись состояния по центру полосы
+  ctx.font = 'bold 11px "Segoe UI", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = active ? '#eaffe9' : 'rgba(200,190,170,0.65)';
+  ctx.fillText(active ? 'ПОДСЕКАЙТЕ!' : 'ждём поклёвки…', barX + barW / 2, barY + barH * 0.72);
+
+  // Подсказка под полосой
+  ctx.font = '10px "Segoe UI", sans-serif';
+  ctx.fillStyle = 'rgba(200,190,170,0.7)';
+  ctx.fillText(!WORK.running ? 'нажмите «Начать»'
+    : 'жмите Пробел или кнопку, когда полоса вспыхнет', barX + barW / 2, barY + barH + 15);
+  ctx.textAlign = 'left';
+}
+
+// Общая подпись сверху: название, счёт, награда и сообщение
+function drawWorkCaption(ctx, W, H, def, fishing) {
   ctx.fillStyle = 'rgba(240,232,210,0.92)';
   ctx.font = 'bold 14px "Segoe UI", sans-serif';
   ctx.textAlign = 'center';
@@ -4413,8 +5482,9 @@ function renderArenaSquad() {
     </div>
     <div class="mode-picker">
       <span class="mp-label">Режим</span>
-      <button class="chip ${STATE.modeSel === 'manual' ? 'on' : ''}" onclick="setMode('manual')">🎮 Ручной</button>
-      <button class="chip ${STATE.modeSel === 'auto' ? 'on' : ''}" onclick="setMode('auto')">🤖 Автобой</button>
+      <button class="chip ${STATE.modeSel === 'auto' ? 'on' : ''}" onclick="setMode('auto')" data-tip="🤖 <b>Автобой</b><br><small>ИИ ведёт отряд сам. Режим по умолчанию</small>">🤖 Автобой</button>
+      <button class="chip ${STATE.modeSel === 'manual' ? 'on' : ''}" onclick="setMode('manual')" data-tip="🎮 <b>Кликер</b><br><small>Кликайте по врагу и бейте в ту часть тела, куда попали</small>">🎮 Кликер</button>
+      <button class="chip ${STATE.modeSel === 'step' ? 'on' : ''}" onclick="setMode('step')" data-tip="♟️ <b>Пошаговый</b><br><small>Выбирайте бойца и стойку, бейте по цели. Ход передаётся по кнопке</small>">♟️ Пошаговый</button>
       <button class="wide-btn small" onclick="goTo('barracks')">Отряд</button>
     </div>
   `;
@@ -4930,6 +6000,8 @@ function addToast(msg) {
 function initGame() {
   // Стартовый экран: выбор из 5 слотов (или новая игра)
   showSlotScreen(true);
+  // Пассивная регенерация бойцов вне боя
+  startRegenLoop();
   window.addEventListener('resize', () => {
     if (STATE.currentLocation === 'city') drawCityBackdrop();
   });

@@ -112,11 +112,15 @@ function unitStatsFromGlad(glad) {
   const armorHead = eq.head ? eq.head.armor : 0;
   const armorArms = eq.arms ? eq.arms.armor : 0;
   const armorLegs = eq.legs ? eq.legs.armor : 0;
-  const armorBody = (eq.body ? eq.body.armor : 0) + Math.round((armorArms + armorLegs) * 0.35);
+  // У пса вместо человеческих доспехов — своя попона/нагрудник
+  const armorBody = (eq.body ? eq.body.armor : 0) + Math.round((armorArms + armorLegs) * 0.35)
+    + (glad.isDog && eq.doggear ? (eq.doggear.armor || 0) : 0);
   // В левой руке может быть щит ИЛИ второй клинок
   const offItem = eq.offhand || null;
   const offShield = offItem && offItem.slot === 'offhand' ? offItem : null;
-  const offWeapon = offItem && offItem.slot === 'weapon' ? offItem : null;
+  // Парный набор держат в двух руках: у него второй клинок «встроен»
+  const offWeapon = offItem && offItem.slot === 'weapon' ? offItem
+    : (eq.weapon && eq.weapon.dualPair ? eq.weapon : null);
   const armorShield = offShield ? (offShield.armor || 0) : 0;
   const def = (glad.def || 0) + (offShield ? (offShield.defBonus || 0) : 0) + Math.round(attrs.wil * 0.5);
 
@@ -144,6 +148,7 @@ function deriveRole(glad) {
   // Второй клинок в левой руке — это димахер, а не защитник
   const off = glad.equip && glad.equip.offhand;
   if (off && off.slot === 'offhand') return 'shield';
+  // Парный набор тоже держат двумя руками, но роль остаётся «ближний бой»
   return 'melee';
 }
 
@@ -409,9 +414,48 @@ function recalcUnit(u) {
   u.ap = Math.min(u.ap, u.maxAp);
 }
 
+// Женские причёски и мужские разделены: «две косы» у бородатого громилы
+// смотрятся как ошибка, а не как характер.
+const FEMALE_HAIR = ['long', 'ponytail', 'braids', 'bun', 'curly', 'halfup', 'twinbraids', 'wavy', 'fringe', 'undercut', 'shaved'];
+const MALE_HAIR = ['short', 'long', 'ponytail', 'braids', 'bun', 'mohawk', 'curly', 'dreadlocks', 'topknot', 'shaved', 'bald',
+  'crew', 'slick', 'parted', 'fringe', 'spiky', 'afro', 'wavy', 'undercut'];
+
+function randomOf(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// Внешность врага рождается один раз и запоминается на самом юните.
+// Иначе оценка шансов и выход на песок показывали бы разных людей.
+function rollEnemyLook(u) {
+  if (u._look) return u._look;
+  const femaleNames = typeof NAMES_F !== 'undefined' ? NAMES_F : [];
+  const firstName = String(u.name || '').split(' ')[0];
+  // Пол привязан к имени: «Кувалда» женского облика с бородой не бывает.
+  const female = femaleNames.indexOf(firstName) >= 0;
+  const hairPool = female ? FEMALE_HAIR : MALE_HAIR;
+  // Женщине бороду не рисуем, мужчине — по настроению: треть бойцов
+  // гладко выбрита, остальные носят что-то на лице.
+  let beard = 'none';
+  if (!female) {
+    const r = Math.random();
+    beard = r < 0.34 ? 'none' : r < 0.5 ? 'stubble' : randomOf(BEARD_STYLES.map(s => s.id));
+    if (beard === 'none' && r >= 0.34) beard = 'stubble';
+  }
+  u._look = {
+    gender: female ? 'female' : 'male',
+    build: randomOf(BUILDS).id,
+    skin: randomOf(SKIN_TONES).color,
+    hair: randomOf(HAIR_COLORS).color,
+    hairStyle: randomOf(hairPool),
+    // Полный набор черт лица, а не только овал: враги с одинаковой
+    // формой лица всё равно должны выглядеть разными людьми.
+    ...randomFaceLook(),
+    beard: beard
+  };
+  return u._look;
+}
+
 function enemyUnitToGlad(u) {
-  // Боссы приходят со своим готовым обликом
-  const look = u.look || {};
+  // Боссы приходят со своим готовым обликом, остальные — случайным.
+  const look = u.look || rollEnemyLook(u);
   const g = {
     id: 'eg_' + Math.random().toString(36).substr(2, 6),
     name: u.name,
@@ -422,12 +466,19 @@ function enemyUnitToGlad(u) {
     boss: !!u.boss,
     aura: u.aura || null,
     isDog: !!u.isDog,
-    gender: look.gender || (u.name.length % 3 === 0 ? 'female' : 'male'),
-    build: look.build || ['normal', 'muscular', 'heavy', 'slim'][u.name.length % 4],
-    skinColor: look.skin || ['#e8ab7e', '#cf9468', '#f5c9a4', '#a9744c'][u.name.length % 4],
-    hairColor: look.hair || ['#4a3018', '#2a2118', '#c9a45c', '#a84a3a'][u.name.length % 4],
-    hairStyle: look.hairStyle || ['short', 'long', 'ponytail', 'mohawk'][u.name.length % 4],
-    beardStyle: look.beard || ['full', 'stubble', 'none'][u.name.length % 3],
+    gender: look.gender,
+    build: look.build,
+    skinColor: look.skin,
+    hairColor: look.hair,
+    hairStyle: look.hairStyle,
+    faceStyle: look.faceStyle,
+    // Если у босса задан только овал, остальные черты берём по умолчанию:
+    // eyeSetOf/noseSetOf/browSetOf/mouthSetOf сами подставят базовый набор.
+    eyeStyle: look.eyeStyle,
+    noseStyle: look.noseStyle,
+    browStyle: look.browStyle,
+    mouthStyle: look.mouthStyle,
+    beardStyle: look.beard,
     colors: u.colors || null,
     attrs: {
       str: Math.round(u.atk / 12), dex: Math.round((u.agi || 8) / 1.5),
@@ -483,6 +534,76 @@ function enemyStepsFor(count) {
   if (count >= 3) return ENEMY_HOME.slice();
   if (count === 2) return [11, 13];
   return [12];
+}
+
+// ==================== СНАРЯЖЕНИЕ ПРОТИВНИКОВ ====================
+// Шаблон отряда задаёт роль и «породу» бойца, а вещи подбираются случайно
+// из вилки тиров, привязанной к сложности арены. Так один и тот же отряд
+// выходит на песок по-разному: то в коже и с дубиной, то в кольчуге.
+const ENEMY_GEAR_TIERS = {
+  low:    { min: 1, max: 2 },
+  mid:    { min: 2, max: 3 },
+  brutal: { min: 3, max: 5 }
+};
+
+// Вероятность, что у бойца вообще есть вещь в этом слоте.
+const ENEMY_GEAR_FILL = {
+  low:    { head: 0.5, body: 0.65, arms: 0.35, legs: 0.6 },
+  mid:    { head: 0.72, body: 0.85, arms: 0.55, legs: 0.78 },
+  brutal: { head: 0.92, body: 0.98, arms: 0.8, legs: 0.9 }
+};
+
+function gearPoolFor(slot, tiers, cat) {
+  return itemsByCat(cat || slot).filter(i =>
+    !i.bossItem && !i.dogOnly &&
+    (i.tier || 1) >= tiers.min && (i.tier || 1) <= tiers.max);
+}
+
+function pickGear(pool) {
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
+}
+
+// Подбирает снаряжение бойцу. Роль не ломаем: лучник остаётся с луком
+// или арбалетом, щитовик — со щитом, двуручное в руки не даём.
+function rollEnemyGear(u, tierId) {
+  const tiers = ENEMY_GEAR_TIERS[tierId] || ENEMY_GEAR_TIERS.mid;
+  const fill = ENEMY_GEAR_FILL[tierId] || ENEMY_GEAR_FILL.mid;
+  const out = { wId: u.wId, oId: u.oId, hId: u.hId, bId: u.bId, aId: u.aId, lId: u.lId };
+  const isRanged = u.role === 'ranged';
+  const isShield = u.role === 'shield';
+
+  // Оружие: та же категория, что в шаблоне
+  const baseW = u.wId ? itemById(u.wId) : null;
+  if (baseW) {
+    const pool = gearPoolFor('weapon', tiers, baseW.cat)
+      .filter(i => isRanged || !i.twoHanded);
+    const w = pickGear(pool);
+    if (w) out.wId = w.id;
+  }
+
+  // Щит: щитовику почти всегда, остальным — изредка
+  if (isShield) {
+    const s = pickGear(gearPoolFor('offhand', tiers));
+    if (s) out.oId = s.id;
+  } else if (!isRanged && Math.random() < 0.18) {
+    const s = pickGear(gearPoolFor('offhand', tiers));
+    if (s) out.oId = s.id;
+  } else if (!isRanged) {
+    out.oId = null;
+  }
+
+  // Броня по слотам
+  const slotKeys = { head: 'hId', body: 'bId', arms: 'aId', legs: 'lId' };
+  Object.keys(slotKeys).forEach(slot => {
+    const key = slotKeys[slot];
+    // Тело закрывают охотнее, чем руки: так силуэты врагов различаются
+    const chance = Math.min(1, fill[slot] + (slot === 'body' ? 0.1 : 0));
+    if (Math.random() > chance) { out[key] = null; return; }
+    const it = pickGear(gearPoolFor(slot, tiers));
+    if (it) out[key] = it.id;
+  });
+
+  return out;
 }
 
 // ==================== БОСС АРЕНЫ ====================
@@ -557,12 +678,17 @@ function buildMatch(arenaId, tierId, bossOverride) {
   const count = enemyCountFor(tierId);
   const sc = enemyPowerScale(count);
 
-  const units = template.slice(0, count).map(u => ({
-    ...u,
-    hp: Math.round(u.hp * pow * sc.hp),
-    atk: Math.round(u.atk * pow * sc.atk),
-    def: Math.round(u.def * pow * sc.def)
-  }));
+  const units = template.slice(0, count).map(u => {
+    const unit = {
+      ...u,
+      hp: Math.round(u.hp * pow * sc.hp),
+      atk: Math.round(u.atk * pow * sc.atk),
+      def: Math.round(u.def * pow * sc.def)
+    };
+    // Снаряжение подбирается случайно под сложность арены
+    Object.assign(unit, rollEnemyGear(u, tierId));
+    return unit;
+  });
 
   const base = 34 + tierIndex(tierId) * 16;
   const countBonus = count >= 3 ? 1 : count === 2 ? 1.22 : 1.5;
@@ -660,8 +786,9 @@ function renderDeploy() {
         <div class="cfc-lbl">шанс победы</div>
       </div>
       <div class="cf-mode">
-        <button class="chip ${STATE.modeSel === 'manual' ? 'on' : ''}" onclick="setMode('manual'); renderDeploy()">🎮 Ручной</button>
         <button class="chip ${STATE.modeSel === 'auto' ? 'on' : ''}" onclick="setMode('auto'); renderDeploy()">🤖 Автобой</button>
+        <button class="chip ${STATE.modeSel === 'manual' ? 'on' : ''}" onclick="setMode('manual'); renderDeploy()">🎮 Кликер</button>
+        <button class="chip ${STATE.modeSel === 'step' ? 'on' : ''}" onclick="setMode('step'); renderDeploy()">♟️ Пошаговый</button>
       </div>
       <button class="wide-btn" onclick="cancelDeploy()" data-tip="Вернуться к выбору сложности, бой не начнётся">← Назад</button>
       <button class="wide-btn primary" onclick="confirmDeploy()">⚔️ В бой</button>
@@ -887,6 +1014,7 @@ function startCombat(match, mode, deploySlots) {
   COMBAT.aim = null;
   COMBAT.menu = null;
   COMBAT.retreatArmed = false;
+  COMBAT.turnRunning = false;
   clearTimeout(COMBAT.retreatTimer);
   COMBAT.magic = [];
   COMBAT.cam = { focusX: WORLD_W / 2, scale: 1, init: false };
@@ -1041,20 +1169,58 @@ async function autoPlay() {
   endPlayerTurn();
 }
 
-// Переключение автобой ↔ ручное управление прямо в бою
-function toggleCombatMode() {
+// Переключение режимов боя прямо в бою.
+//   auto   — ИИ ведёт отряд сам (по умолчанию);
+//   manual — кликер: кликаешь по врагу и бьёшь в ту часть, куда попал;
+//   step   — пошаговый: выбираешь своего бойца и ставишь блок/уклон,
+//            кликаешь по врагу и выбираешь, куда бить. Тратит ОД,
+//            ход передаётся, враги отвечают в конце раунда.
+const COMBAT_MODES = ['auto', 'manual', 'step'];
+const COMBAT_MODE_INFO = {
+  auto:   { label: '🤖 автобой',  toast: 'Автобой',        hint: 'ИИ бьёт по кулдауну' },
+  manual: { label: '🎮 кликер',   toast: 'Кликер',         hint: 'Кликайте по врагу — куда попали, туда и удар' },
+  step:   { label: '♟️ пошаговый', toast: 'Пошаговый бой',  hint: 'Выберите бойца, поставьте стойку, бейте по цели' }
+};
+
+function cycleCombatMode() {
   if (!COMBAT.active || COMBAT.over) return;
-  COMBAT.mode = COMBAT.mode === 'auto' ? 'manual' : 'auto';
+  const i = COMBAT_MODES.indexOf(COMBAT.mode);
+  setCombatMode(COMBAT_MODES[(i + 1) % COMBAT_MODES.length]);
+}
+
+function setCombatMode(mode) {
+  if (!COMBAT.active || COMBAT.over) return;
+  if (!COMBAT_MODES.includes(mode)) return;
+  COMBAT.mode = mode;
   COMBAT.menu = null;
   COMBAT.aim = null;
   COMBAT.heavyMode = false;
   sfx('click');
+  if (mode === 'step') {
+    // Пошаговый бой начинается с полного пула ОД у обеих сторон:
+    // у врагов тоже есть ОД, иначе их полоски пустые и непонятно,
+    // почему противник не отвечает.
+    COMBAT.units.filter(u => u.alive).forEach(u => {
+      u.ap = u.maxAp;
+      u.stance = null;
+      u.dodgeUsed = false;
+    });
+    COMBAT.phase = 'player';
+    if (!COMBAT.activeId) {
+      const first = playerUnitsAlive()[0];
+      if (first) COMBAT.activeId = first.id;
+    }
+  }
+  addLog(`🔁 Режим боя: <b>${COMBAT_MODE_INFO[mode].toast}</b>`, 'log-info');
   updateCombatHUD();
   renderAimPanel();
-  showTurnToast(
-    COMBAT.mode === 'auto' ? 'Автобой' : 'Ручной клик',
-    COMBAT.mode === 'auto' ? 'ИИ бьёт по кулдауну' : 'Кликайте по врагу'
-  );
+  renderUnitMenu();
+  showTurnToast(COMBAT_MODE_INFO[mode].toast, COMBAT_MODE_INFO[mode].hint);
+}
+
+// Совместимость: старый переключатель «авто/ручной»
+function toggleCombatMode() {
+  setCombatMode(COMBAT.mode === 'auto' ? 'manual' : 'auto');
 }
 
 // ==================== МАГИЯ ГЕРОЕВ ====================
@@ -1454,7 +1620,13 @@ function tickStatuses(unit) {
 
 async function aiAct(unit) {
   let guard = 0;
-  while (COMBAT.active && unit.alive && guard++ < 8) {
+  // ИИ действует, пока у бойца есть ОД на осмысленный шаг.
+  // Если ни ударить, ни подойти, ни поставить стойку нельзя — ход
+  // бойца заканчивается сам, а не висит в ожидании таймаута.
+  // Предел итераций выше максимума ОД, иначе боец с большим пулом
+  // обрывал ход на середине и «терял» оставшиеся очки.
+  while (COMBAT.active && unit.alive && guard++ < 24) {
+    if ((unit.ap || 0) < 1) return;
     // Босс сначала пробует способность
     if (unit.boss && unit.abilities) {
       const ab = bossAbilityReady(unit);
@@ -1535,10 +1707,21 @@ function aiPickLimb(attacker, target) {
   return 'torso';
 }
 
-async function endPlayerTurn() {
-  // В кликер-бою ходов нет: фазы не переключаются
-  if (COMBAT.clicker) return;
-  if (!COMBAT.active || COMBAT.phase !== 'player' || COMBAT.busy) return;
+async function endPlayerTurn(force) {
+  // Ходы существуют только в пошаговом режиме: автобой и кликер живут
+  // своими таймерами. Раньше здесь стояла проверка флага COMBAT.clicker,
+  // который всегда true — из-за неё ход противника не запускался никогда
+  // и кнопка «завершить ход» молча ничего не делала.
+  if (COMBAT.mode !== 'step') return;
+  if (!COMBAT.active || COMBAT.over) return;
+  // Защита от двойного запуска: пока идёт ход врага, повторный вызов
+  // игнорируется. Флаг собственный, а не COMBAT.busy: тот используется
+  // и для подходов, и мог «залипнуть» после переключения режима.
+  if (COMBAT.turnRunning) return;
+  // Кнопка «пропустить ход» передаёт force = true: игрок вправе закончить
+  // ход в любой момент, даже если фаза по какой-то причине не 'player'.
+  if (!force && COMBAT.phase !== 'player') return;
+  COMBAT.turnRunning = true;
   COMBAT.phase = 'enemy';
   COMBAT.busy = true;
   COMBAT.aim = null;
@@ -1548,22 +1731,42 @@ async function endPlayerTurn() {
   addLog('⏳ Ход противника...', 'log-info');
   await sleep(320);
 
-  for (const e of COMBAT.units.filter(u => u.alive && u.side === 'enemy')) {
-    if (!COMBAT.active) return;
-    e.ap = e.maxAp;
-    e.stance = null;
-    e.dodgeUsed = false;
-    COMBAT.activeId = e.id;
-    updateCombatHUD();
-    await sleep(200);
-    await aiAct(e);
-    if (!COMBAT.active) return;
-    if (checkTeamWipe()) return;
+  try {
+    for (const e of COMBAT.units.filter(u => u.alive && u.side === 'enemy')) {
+      if (!COMBAT.active || COMBAT.over) break;
+      e.ap = e.maxAp;
+      e.stance = null;
+      e.dodgeUsed = false;
+      COMBAT.activeId = e.id;
+      updateCombatHUD();
+      await sleep(200);
+      await aiAct(e);
+      if (!COMBAT.active || COMBAT.over) break;
+      if (checkTeamWipe()) break;
+    }
+  } finally {
+    COMBAT.turnRunning = false;
+    COMBAT.busy = false;
   }
 
-  if (!COMBAT.active) return;
+  if (!COMBAT.active || COMBAT.over) return;
   COMBAT.round++;
-  COMBAT.busy = false;
+  if (COMBAT.mode === 'step') {
+    // Новый раунд: обе стороны снова получают полный пул ОД, стойки
+    // сбрасываются. Врагам ОД тоже восстанавливаем — иначе их полоски
+    // оставались бы пустыми и не было видно, что противник готов.
+    COMBAT.units.filter(u => u.alive).forEach(u => {
+      u.ap = u.maxAp;
+      u.stance = null;
+      u.dodgeUsed = false;
+    });
+    const first = playerUnitsAlive()[0];
+    if (first) COMBAT.activeId = first.id;
+    COMBAT.phase = 'player';
+    updateCombatHUD();
+    showTurnToast(`Раунд ${COMBAT.round}`, 'ваш ход');
+    return;
+  }
   beginRound();
 }
 
@@ -1605,13 +1808,35 @@ function canFleeByHealth(u) {
   return (u.glad.hp / Math.max(1, u.glad.maxHp)) <= FLEE_HP_PCT;
 }
 
+// 🧠 Воля — это не только снижение урона, но и готовность стоять до конца.
+// Базовый шанс побега (8% в секунду при HP ≤ 22%) умножается на множитель:
+// воля 5 — ровно база, воля 1 — почти вдвое выше (трус бежит первым),
+// воля 12 и выше — втрое ниже (боец скорее умрёт, чем покинет песок).
+// Пределы множителя 0.28…1.9: даже самый стойкий не бессмертен, а самый
+// робкий не сбегает мгновенно — иначе бой превращался в лотерею.
+const FLEE_WILL_BASE = 5;
+
+function fleeWillMul(u) {
+  const attrs = (u && u.glad && typeof effectiveAttrs === 'function' && !u.glad.isDog)
+    ? effectiveAttrs(u.glad)
+    : (u && u.glad && u.glad.attrs) || null;
+  const wil = attrs ? attrs.wil : FLEE_WILL_BASE;
+  return clamp(1 - (wil - FLEE_WILL_BASE) * 0.14, 0.28, 1.9);
+}
+
+// Итоговый шанс побега в секунду: база × воля, но не выше 22% —
+// иначе бойцы начинали бы исчезать с песка почти сразу.
+function fleeChanceFor(u) {
+  return Math.min(0.22, FLEE_CHANCE_PER_SEC * fleeWillMul(u));
+}
+
 // Бросаем кубик раз в секунду для каждого тяжелораненого бойца
 function tickFleeRoll(u, dt) {
   if (!canFleeByHealth(u)) { u.fleeAcc = 0; return; }
   u.fleeAcc = (u.fleeAcc || 0) + dt;
   if (u.fleeAcc < 1) return;
   u.fleeAcc = 0;
-  if (Math.random() < FLEE_CHANCE_PER_SEC) {
+  if (Math.random() < fleeChanceFor(u)) {
     fleeArena(u);
     checkTeamWipe();
   }
@@ -2100,6 +2325,9 @@ function canAutoStrike(u) {
 // Автодвижение и вражеские атаки
 function clickerTick(dt) {
   if (!COMBAT.active || COMBAT.over) return;
+  // Пошаговый режим живёт по раундам: бойцы не ходят и не бьют сами.
+  // Движение — playerEngage, удары — playerAttackLimb, враги — endPlayerTurn.
+  if (COMBAT.mode === 'step') return;
   COMBAT.clock += dt * 1000;
   const now = performance.now();
   const STEP_TIME = 0.34; // секунд на клетку
@@ -2112,7 +2340,9 @@ function clickerTick(dt) {
 
   // Мои бойцы: подходят к ближайшему врагу.
   // В автобое раненый отходит назад, перепрыгивая своих.
-  playerUnitsAlive().forEach(u => {
+  // В пошаговом режиме никто не двигается сам: подход выполняет
+  // playerEngage, когда игрок кликает по цели.
+  if (COMBAT.mode === 'auto') playerUnitsAlive().forEach(u => {
     if (u.stepLock || u.fled) return;
     const foe = nearestEnemy(u);
     if (!foe) return;
@@ -2149,7 +2379,7 @@ function clickerTick(dt) {
   // Ручной режим: лучники и копейщики бьют сами, не дожидаясь клика,
   // но только если прямо перед ними свой боец — они стреляют через голову
   // или переступают. Если перед ними враг — только ручное управление.
-  if (COMBAT.mode !== 'auto') {
+  if (COMBAT.mode === 'manual') {
     playerUnitsAlive().forEach(u => {
       if (!canAutoStrike(u)) return;
       if (now < (u.cdUntil || 0)) return;
@@ -2176,6 +2406,10 @@ function clickerTick(dt) {
       checkTeamWipe();
     });
   }
+
+  // Пошаговый режим: сам игрок решает, кто и куда бьёт. Но враги всё равно
+  // действуют по таймеру — иначе бой замирал бы, пока игрок думает.
+  // Вражеская часть ниже общая для всех режимов.
 
   // Враги: подходят и бьют по своему кулдауну.
   // Лучники и копейщики врага тоже переступают через своих,
@@ -2239,6 +2473,7 @@ function selectUnit(id) {
   COMBAT.menu = { unitId: id };
   sfx('click');
   updateCombatHUD();
+  if (COMBAT.mode === 'step') renderUnitMenu();
 }
 
 // Открыть/закрыть панель выбора конечности
@@ -2260,7 +2495,8 @@ function attackLimb(limbId) {
   if (!COMBAT.aim) return;
   const target = COMBAT.units.find(u => u.id === COMBAT.aim.targetId);
   if (!target || !target.alive) { closeAim(); return; }
-  // В кликер-бою кнопка конечности делает то же, что клик по ней
+  // Пошаговый режим тратит ОД и передаёт ход; кликер — только кулдаун.
+  if (COMBAT.mode === 'step') { playerAttackLimb(target, limbId); return; }
   clickerAttack(target, limbId);
 }
 
@@ -2415,6 +2651,29 @@ function showTurnToast(main, sub) {
 // Автопереход: если у бойца не осталось ОД на действие — передаём ход следующему
 function autoAdvanceTurn() {
   if (!canControl()) return;
+  // Пошаговый режим: ход НЕ завершается от одного действия, но как только
+  // у всего отряда кончились ОД — передаём ход противнику автоматически.
+  // Иначе игрок оставался с пустыми полосками и был вынужден жать кнопку.
+  if (COMBAT.mode === 'step') {
+    const players = playerUnitsAlive();
+    const able = players.filter(u => (u.ap || 0) >= 1);
+    if (!able.length) {
+      showTurnToast('Ход завершён', 'у отряда закончились очки действий');
+      setTimeout(() => {
+        if (canControl() && COMBAT.mode === 'step' && !COMBAT.turnRunning) endPlayerTurn(true);
+      }, 600);
+      return;
+    }
+    const cur = getActiveUnit();
+    if (!cur || (cur.ap || 0) < 1) {
+      const next = able[0];
+      COMBAT.activeId = next.id;
+      COMBAT.menu = null;
+      COMBAT.aim = null;
+      updateCombatHUD();
+    }
+    return;
+  }
   const cur = getActiveUnit();
   const players = playerUnitsAlive();
   const able = players.filter(u => u.ap >= STEP_COST);
@@ -2434,6 +2693,19 @@ function autoAdvanceTurn() {
     showTurnToast(`Ходит ${next.glad.name.split(' ')[0]}`, 'у предыдущего бойца закончились ОД');
     updateCombatHUD();
   }
+}
+
+// Кнопка «пропустить ход» в пошаговом режиме.
+// force = true: передать ход можно в любой момент, независимо от того,
+// что успела сделать проверка фазы — кнопка не должна «залипать».
+function endTurnNow() {
+  if (!COMBAT.active || COMBAT.over) return;
+  if (COMBAT.mode !== 'step') return;
+  if (COMBAT.turnRunning) return;
+  COMBAT.aim = null;
+  COMBAT.menu = null;
+  sfx('click');
+  endPlayerTurn(true);
 }
 
 // ==================== КЛИКИ И КАМЕРА ====================
@@ -2484,8 +2756,12 @@ function arenaClick(e) {
 
   if (hit) {
     if (hit.side === 'player') { selectUnit(hit.id); return; }
-    // Клик по врагу — сразу удар в ту часть тела, куда попали.
-    // Панель прицела в кликер-бою не нужна: она только закрывала арену.
+    // Клик по врагу:
+    //   кликер — сразу удар в ту часть тела, куда попали;
+    //   пошаговый — подход и панель выбора конечности с шансами;
+    //   автобой — только подсветка цели, бьёт ИИ.
+    if (COMBAT.mode === 'step') { playerEngage(hit); return; }
+    if (COMBAT.mode === 'auto') { COMBAT.aim = { targetId: hit.id }; return; }
     const limbId = limbFromClick(hit, mx, my, W, H);
     clickerAttack(hit, limbId);
     return;
@@ -2639,6 +2915,21 @@ function limbPips(u) {
   }).join('')}</div>`;
 }
 
+// Полоска очков действия: столько делений, сколько ОД у бойца.
+// В пошаговом бою это главный ресурс — без него не видно, почему
+// удар недоступен. Цвет делений: полные — золотые, пустые — тёмные.
+function apPips(u) {
+  const max = Math.max(1, u.maxAp || 1);
+  const cur = Math.max(0, Math.min(max, u.ap || 0));
+  let pips = '';
+  for (let i = 0; i < max; i++) {
+    pips += `<i class="ap-pip ${i < cur ? 'on' : ''}"></i>`;
+  }
+  return `<div class="ap-row" title="Очки действия: ${cur} из ${max}">
+    <span class="ap-lbl">⚡</span><div class="ap-pips">${pips}</div><b class="ap-num">${cur}/${max}</b>
+  </div>`;
+}
+
 function updateCombatHUD() {
   const rp = document.getElementById('team-player');
   const re = document.getElementById('team-enemy');
@@ -2663,7 +2954,8 @@ function updateCombatHUD() {
         <span class="chip-stance">${magicIcon}${stanceIcon}${lost ? ` <i class="chip-lost">${lost}✕</i>` : ''}</span>
       </div>
       <div class="chip-bar"><i style="width:${pct}%;background:${pct > 55 ? '#5aa870' : pct > 25 ? '#e5b54f' : '#c0392b'}"></i></div>
-      <div class="chip-meta">${u.fled ? 'покинул арену' : dead ? 'пал' : `${u.glad.hp}/${u.glad.maxHp}`}${u.ap > 0 && !dead && u.side === 'player' ? ` • ⚡${u.ap}` : ''}${u.iceShield > 0 ? ` ❄${u.iceShield}` : ''}</div>
+      ${!dead && !u.fled ? apPips(u) : ''}
+      <div class="chip-meta">${u.fled ? 'покинул арену' : dead ? 'пал' : `${u.glad.hp}/${u.glad.maxHp}`}${u.iceShield > 0 ? ` ❄${u.iceShield}` : ''}</div>
     </div>`;
   };
 
@@ -2682,10 +2974,13 @@ function updateCombatHUD() {
     <span class="win-meter ${lvClass}" title="Живой шанс победы: переоценивается каждый ход по HP и составу отрядов">
       <b>${live}%</b><small>${winChanceLabel(live)}</small>
     </span>
-    <span class="round-phase player">${readyCount ? 'ГОТОВЫ БИТЬ' : 'ПЕРЕЗАРЯДКА'}</span>
-    <button class="mode-toggle ${COMBAT.mode}" onclick="toggleCombatMode()" title="Переключить автобой / ручное управление">
-      ${COMBAT.mode === 'auto' ? '🤖 авто' : '🎮 ручной'}
+    <span class="round-phase player">${COMBAT.mode === 'step'
+      ? (COMBAT.phase === 'enemy' ? 'ХОД ПРОТИВНИКА' : 'ВАШ ХОД')
+      : (readyCount ? 'ГОТОВЫ БИТЬ' : 'ПЕРЕЗАРЯДКА')}</span>
+    <button class="mode-toggle ${COMBAT.mode}" onclick="cycleCombatMode()" title="Переключить режим: автобой → кликер → пошаговый">
+      ${COMBAT_MODE_INFO[COMBAT.mode] ? COMBAT_MODE_INFO[COMBAT.mode].label : COMBAT.mode}
     </button>
+    ${COMBAT.mode === 'step' ? `<button class="skip-turn-btn ${COMBAT.turnRunning ? 'busy' : ''}" onclick="endTurnNow()" title="Завершить ход: противники ответят сразу">${COMBAT.turnRunning ? '⏳ ход врага…' : '✅ завершить ход'}</button>` : ''}
     <button class="retreat-btn ${COMBAT.retreatArmed ? 'armed' : ''}" onclick="retreatCombat()"
       title="Уйти с арены и сохранить отряд">${COMBAT.retreatArmed ? '🏳️ точно?' : '🏳️ отступить'}</button>`;
 
@@ -2704,6 +2999,7 @@ function updateCombatHUD() {
       up.innerHTML = `
         <div class="up-name">${u.glad.name}</div>
         <div class="up-role">${ROLE_ICONS[u.role]} ${ROLE_LABELS[u.role]} • ${w.name}</div>
+        ${apPips(u)}
         ${offLine}
         <div class="up-row"><span>⏱️ Замах</span><b>${(attackCooldownFor(u, w) / 1000).toFixed(1)} с</b></div>
         <div class="up-row"><span>🗡️ Урон</span><b>${Math.round(w.dmgMin * u.dmgMul)}–${Math.round(w.dmgMax * u.dmgMul)}</b></div>
@@ -2724,7 +3020,11 @@ function updateCombatHUD() {
   }
 
   if (hint) {
-    hint.textContent = '🖱️ Клик по врагу — удар в ту часть тела, куда попали. Лучники и копейщики бьют сами, пока перед ними свой; враг впереди — только по клику.';
+    hint.textContent = COMBAT.mode === 'step'
+      ? '♟️ Клик по своему бойцу — стойка (щит/уклон), клик по врагу — выбор части тела. Кнопка «✅ завершить ход» передаёт ход противнику; когда у отряда кончатся ОД, ход передастся сам.'
+      : COMBAT.mode === 'auto'
+        ? '🤖 Автобой: ИИ ведёт отряд сам. Переключите режим кнопкой сверху, чтобы бить вручную.'
+        : '🖱️ Клик по врагу — удар в ту часть тела, куда попали. Лучники и копейщики бьют сами, пока перед ними свой; враг впереди — только по клику.';
   }
 
   renderAimPanel();
@@ -2770,12 +3070,14 @@ function renderUnitMenu() {
       ${u.offWeapon ? `<span title="Два клинка">⚔️2</span>` : ''}
       ${u.glad.magic ? `<span style="color:${MAGIC_SCHOOLS[u.glad.magic].color}">${MAGIC_SCHOOLS[u.glad.magic].icon}</span>` : ''}
     </div>
+    ${apPips(u)}
     ${spells.length ? `<div class="um-sec">Магия</div><div class="um-grid one">${spellButtons}</div>` : ''}
     <div class="um-sec">Стойка</div>
     <div class="um-grid">
       <button class="um-btn ${u.stance === 'block' ? 'on' : ''}" ${canBlock ? '' : 'disabled'} onclick="setStance('block')">🛡️ Щит</button>
       <button class="um-btn ${u.stance === 'dodge' ? 'on' : ''}" ${canDodge ? '' : 'disabled'} onclick="setStance('dodge')">💨 Уклон</button>
     </div>
+    ${COMBAT.mode === 'step' ? `<button class="um-skip" onclick="endTurnNow()">✅ завершить ход</button>` : ''}
     <button class="um-close" onclick="closeUnitMenu()">закрыть</button>
   `;
   el.style.display = 'block';

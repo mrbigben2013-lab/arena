@@ -107,7 +107,7 @@
             <span class="ds-label">Левая рука</span>
             <span class="ds-item" id="slot-offhand">—</span>
           </div>
-          <div class="doll-canvas"><canvas id="bustCanvas" width="270" height="330"></canvas></div>
+          <div class="doll-canvas"><canvas id="bustCanvas" width="340" height="420"></canvas></div>
           <div class="doll-slot slot-body" data-slot="body" ondrop="dropOnSlot(event,'body')" ondragover="allowDrop(event)" ondragleave="leaveSlot(event)">
             <span class="ds-label">Туловище</span>
             <span class="ds-item" id="slot-body">—</span>
@@ -121,6 +121,7 @@
             <span class="ds-item" id="slot-legs">—</span>
           </div>
         </div>
+        <div id="equip-summary" class="equip-summary"></div>
         <div class="doll-hint">Клик по ячейке — выбрать снаряжение из склада. Перетащите предмет в ячейку — или нажмите на него.</div>
         <!-- Селектор снаряжения: всплывает при клике на любую ячейку манекена -->
         <div id="slot-picker" class="slot-picker" style="display:none"></div>
@@ -334,6 +335,18 @@
 
 </main>
 
+<!-- ================= ВЫБОР СНАРЯЖЕНИЯ ДЛЯ ПСА ================= -->
+<div id="dog-gear-modal" class="modal-overlay" style="display:none">
+  <div class="panel dog-gear-box">
+    <div class="sp-head">
+      <span class="sp-title">Попона для пса</span>
+      <button class="sp-close" onclick="closeDogGearPicker()">✕</button>
+    </div>
+    <div id="dog-gear-body"></div>
+    <div class="dog-gear-note">Попоны продаются в кузнице на вкладке «🐕 Псы».</div>
+  </div>
+</div>
+
 <!-- ================= ВЫБОР СЛОТА (меню) ================= -->
 <div id="slot-modal" class="modal-overlay" style="display:none">
   <div class="panel slot-box">
@@ -349,7 +362,7 @@
     <h2>⚔️ Создание чемпиона</h2>
     <div class="creator-body">
       <div class="creator-preview">
-        <canvas id="creatorCanvas" width="220" height="250"></canvas>
+        <canvas id="creatorCanvas" width="300" height="400"></canvas>
         <button class="mini-btn" onclick="randomizeCreator()" data-tip="🎲 <b>Случайная внешность</b><br><small>Сгенерировать случайный облик героя</small>">🎲 внешность</button>
       </div>
 
@@ -424,6 +437,95 @@
               <option value="#e4e2dc">Белый</option>
             </select>
           </label>
+          <label>Форма лица
+            <select id="cr-face" onchange="updateCreatorPreview()">
+              <option value="classic" selected>Классическое</option>
+              <option value="square">Квадратное</option>
+              <option value="oval">Овальное</option>
+              <option value="round">Круглое</option>
+              <option value="gaunt">Худое</option>
+              <option value="broad">Широкоскулое</option>
+              <option value="pointed">Заострённое</option>
+              <option value="weathered">Обветренное</option>
+            </select>
+          </label>
+          <label>Глаза
+            <select id="cr-eyes" onchange="updateCreatorPreview()">
+              <option value="calm" selected>Спокойные</option>
+              <option value="narrow">Прищуренные</option>
+              <option value="wide">Раскрытые</option>
+              <option value="heavy">Тяжёлые веки</option>
+              <option value="almond">Миндалевидные</option>
+              <option value="deep">Глубокие</option>
+              <option value="hawk">Хищные</option>
+              <option value="sleepy">Сонные</option>
+              <option value="kind">Добрые</option>
+              <option value="stare">Немигающий взгляд</option>
+            </select>
+          </label>
+          <label>Нос
+            <select id="cr-nose" onchange="updateCreatorPreview()">
+              <option value="straight" selected>Прямой</option>
+              <option value="aquiline">Орлиный</option>
+              <option value="button">Курносый</option>
+              <option value="broad">Широкий</option>
+              <option value="thin">Тонкий</option>
+              <option value="broken">С горбинкой</option>
+              <option value="snub">Вздёрнутый</option>
+              <option value="heavy">Тяжёлый</option>
+              <option value="roman">Римский</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="creator-grid">
+          <label>Брови
+            <select id="cr-brows" onchange="updateCreatorPreview()">
+              <option value="natural" selected>Естественные</option>
+              <option value="thick">Густые</option>
+              <option value="thin">Тонкие</option>
+              <option value="straight">Прямые</option>
+              <option value="arched">Дугой</option>
+              <option value="angry">Сдвинутые</option>
+              <option value="worried">Домиком</option>
+              <option value="bushy">Косматые</option>
+              <option value="unibrow">Сросшиеся</option>
+            </select>
+          </label>
+          <label>Рот
+            <select id="cr-mouth" onchange="updateCreatorPreview()">
+              <option value="neutral" selected>Обычный</option>
+              <option value="thin">Тонкие губы</option>
+              <option value="full">Полные губы</option>
+              <option value="wide">Широкий рот</option>
+              <option value="small">Маленький рот</option>
+              <option value="grim">Жёсткий</option>
+              <option value="smirk">Ухмылка</option>
+              <option value="scarred">Перекошенный</option>
+            </select>
+          </label>
+        </div>
+        <div class="creator-grid">
+          <label>Борода
+            <select id="cr-beard" onchange="updateCreatorPreview()">
+              <option value="none">Нет</option>
+              <option value="stubble">Щетина</option>
+              <option value="full" selected>Густая</option>
+              <option value="long">Длинная</option>
+              <option value="goatee">Козлиная</option>
+              <option value="moustache">Усы</option>
+              <option value="shortbox">Короткая окладистая</option>
+              <option value="verdi">Верди</option>
+              <option value="chinstrap">По контуру</option>
+              <option value="imperial">Имперская</option>
+              <option value="horseshoe">Подкова</option>
+              <option value="vandyke">Ван Дейк</option>
+              <option value="garibaldi">Гарибальди</option>
+              <option value="anchor">Якорь</option>
+              <option value="ducktail">Утиный хвост</option>
+              <option value="sidewhiskers">Бакенбарды</option>
+            </select>
+          </label>
           <label>Причёска
             <select id="cr-hair-style" onchange="updateCreatorPreview()">
               <option value="short" selected>Короткая</option>
@@ -437,16 +539,16 @@
               <option value="topknot">Узел</option>
               <option value="shaved">Бритый</option>
               <option value="bald">Лысый</option>
-            </select>
-          </label>
-          <label>Борода
-            <select id="cr-beard" onchange="updateCreatorPreview()">
-              <option value="none">Нет</option>
-              <option value="stubble">Щетина</option>
-              <option value="full" selected>Густая</option>
-              <option value="long">Длинная</option>
-              <option value="goatee">Козлиная</option>
-              <option value="moustache">Усы</option>
+              <option value="crew">Ёжик</option>
+              <option value="slick">Зачёс назад</option>
+              <option value="parted">Пробор</option>
+              <option value="fringe">Чёлка</option>
+              <option value="spiky">Рваные пряди</option>
+              <option value="halfup">Полухвост</option>
+              <option value="twinbraids">Две косы</option>
+              <option value="afro">Афро</option>
+              <option value="wavy">Волны</option>
+              <option value="undercut">Выбритый висок</option>
             </select>
           </label>
         </div>
@@ -513,19 +615,7 @@
 <div id="chest-modal" class="modal-overlay" style="display:none">
   <div class="panel chest-box">
     <div id="chest-body"></div>
-    <button class="wide-btn primary" onclick="closeChestModal()" data-tip="Забрать добычу и закрыть сундук">Забрать</button>
-  </div>
-</div>
-
-<!-- Уведомление о выигрыше сундука — появляется поверх рулетки -->
-<div id="chest-win" class="chest-win">
-  <div class="chest-win-inner">
-    <div class="chest-win-icon">🎉</div>
-    <div class="chest-win-text">
-      <div class="chest-win-name"></div>
-      <div class="chest-win-stat"></div>
-    </div>
-    <button class="chest-win-close" onclick="closeChestWin()">✕</button>
+    <button class="wide-btn primary" id="chest-take-btn" onclick="closeChestModal()" data-tip="Забрать добычу и закрыть сундук" disabled>Забрать</button>
   </div>
 </div>
 

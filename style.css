@@ -414,6 +414,40 @@ main { flex: 1; overflow: hidden; position: relative; }
 }
 .mode-toggle:hover { border-color: var(--gold); color: var(--gold); }
 .mode-toggle.auto { color: var(--blue); border-color: rgba(127,154,209,.5); }
+.mode-toggle.manual { color: #9fd6a3; border-color: rgba(127,209,143,.5); }
+.mode-toggle.step { color: #d9b36f; border-color: rgba(229,181,79,.65); }
+/* Очки действия: главный ресурс пошагового боя */
+.ap-row {
+  display: flex; align-items: center; gap: 4px; margin: 3px 0 1px;
+}
+.ap-lbl { font-size: 9px; color: #e5b54f; line-height: 1; }
+.ap-pips { display: flex; gap: 2px; flex: 1; }
+.ap-pip {
+  flex: 1; height: 5px; border-radius: 2px;
+  background: rgba(255,255,255,.09); border: 1px solid rgba(0,0,0,.35);
+  transition: background .15s;
+}
+.ap-pip.on { background: linear-gradient(#ffe9a8, #e5b54f); border-color: rgba(120,86,20,.6); }
+.ap-num { font-size: 9px; color: #cbb68c; font-weight: 800; }
+/* Пропуск хода в пошаговом бою: заметная кнопка, не спрятанная среди мелких */
+.skip-turn-btn {
+  padding: 4px 11px; cursor: pointer; font: inherit; font-size: 10px; font-weight: 800;
+  background: linear-gradient(#3a2a12, #241a0c);
+  border: 1px solid rgba(229,181,79,.75); border-radius: 20px;
+  color: #ffdf9a; letter-spacing: .2px; transition: .15s;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.45);
+}
+.skip-turn-btn:hover {
+  background: linear-gradient(#4d3818, #2e2210);
+  border-color: var(--gold); color: #fff3c4;
+  box-shadow: 0 0 10px rgba(229,181,79,.45);
+}
+/* Пока ходят враги — кнопка неактивна и явно это показывает */
+.skip-turn-btn.busy {
+  background: linear-gradient(#2a2419, #1d1810);
+  border-color: rgba(255,255,255,.16); color: #8b8172;
+  cursor: default; box-shadow: none;
+}
 .retreat-btn {
   padding: 3px 9px; cursor: pointer; font: inherit; font-size: 9.5px; font-weight: 800;
   background: #2a1714; border: 1px solid rgba(192,57,43,.55); border-radius: 20px; color: #e0837a;
@@ -505,6 +539,12 @@ main { flex: 1; overflow: hidden; position: relative; }
   background: transparent; border: 1px solid var(--line-soft); border-radius: 6px; color: #6f6152;
 }
 .um-close:hover { border-color: var(--red); color: var(--red); }
+.um-skip {
+  margin-top: 4px; padding: 6px; cursor: pointer; font: inherit; font-size: 10px; font-weight: 800;
+  background: linear-gradient(#3a2a12, #241a0c); border: 1px solid rgba(229,181,79,.75);
+  border-radius: 6px; color: #ffdf9a; transition: .15s;
+}
+.um-skip:hover { background: linear-gradient(#4d3818, #2e2210); color: #fff3c4; border-color: var(--gold); }
 
 .turn-toast {
   position: absolute; left: 50%; top: 18%; transform: translate(-50%, -10px);
@@ -819,6 +859,57 @@ main { flex: 1; overflow: hidden; position: relative; }
 .ko-lvl { font-size: 10.5px; color: var(--muted); }
 .ko-bar { flex: 1; height: 6px; background: #14100d; border-radius: 4px; overflow: hidden; min-width: 60px; }
 .ko-bar i { display: block; height: 100%; background: linear-gradient(90deg, #4a7c59, #7fd18f); }
+.ko-gear {
+  width: 24px; height: 24px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; border-radius: 6px; cursor: pointer;
+  background: #14100d; border: 1px solid var(--line-soft); color: var(--muted);
+  transition: .14s;
+}
+.ko-gear:hover { border-color: var(--gold); color: var(--gold); }
+.ko-gear.on { border-color: rgba(176,143,67,.7); background: rgba(80,60,30,.45); color: #e5b54f; }
+
+/* ---------- Окно попоны пса ---------- */
+.dog-gear-box {
+  width: min(420px, 94vw); max-height: 88vh; display: flex; flex-direction: column; gap: 10px;
+  padding: 0; overflow: hidden;
+}
+.dog-gear-box .sp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 12px; background: linear-gradient(180deg, #3a2e22, #221a14);
+  border-bottom: 1px solid #4a3b2a; flex-shrink: 0;
+}
+.dog-gear-box .sp-title { font-size: 12.5px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: var(--gold); }
+.dog-gear-box .sp-close {
+  width: 24px; height: 24px; border-radius: 5px; cursor: pointer;
+  background: #241b14; border: 1px solid #4a3b2a; color: #c8b898; font-size: 12px;
+}
+.dog-gear-box .sp-close:hover { background: #5a2a24; border-color: #c0392b; color: #ffd0c8; }
+.dog-gear-box #dog-gear-body { display: flex; flex-direction: column; gap: 8px; padding: 0 12px; min-height: 0; }
+.dg-head { display: flex; align-items: center; gap: 12px; }
+.dg-head canvas { flex-shrink: 0; background: radial-gradient(circle at 50% 60%, #2a2118, #16110d); border-radius: 8px; border: 1px solid var(--line-soft); }
+.dg-name { font-size: 14px; font-weight: 800; color: var(--gold); }
+.dg-sub { font-size: 11px; color: var(--muted); }
+.dg-gear { font-size: 11px; color: #a8c46a; margin-top: 3px; }
+.dog-gear-box .sp-list { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; padding-bottom: 4px; }
+.dog-gear-box .sp-item {
+  display: flex; align-items: center; gap: 9px; cursor: pointer;
+  background: #1c1612; border: 1px solid var(--line-soft); border-radius: 8px; padding: 7px 9px;
+  transition: .14s;
+}
+.dog-gear-box .sp-item:hover { border-color: var(--gold); background: rgba(80,60,30,.3); }
+.dog-gear-box .spi-icon { flex-shrink: 0; display: flex; align-items: center; }
+.dog-gear-box .spi-body { min-width: 0; flex: 1; }
+.dog-gear-box .spi-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.dog-gear-box .spi-name { font-size: 12px; font-weight: 700; }
+.dog-gear-box .spi-stat { font-size: 10px; color: var(--muted); margin-top: 1px; }
+.dog-gear-box .sp-empty { font-size: 11.5px; color: var(--muted); text-align: center; padding: 16px 8px; line-height: 1.5; }
+.dog-gear-box .sp-unequip {
+  align-self: flex-start; font-size: 10.5px; font-weight: 700; cursor: pointer;
+  background: #2a1d16; border: 1px solid #6a4a3a; color: #d8a898; border-radius: 6px; padding: 5px 10px;
+}
+.dog-gear-box .sp-unequip:hover { background: #5a2a24; color: #ffd0c8; }
+.dog-gear-note { font-size: 10px; color: #8a7a68; text-align: center; padding: 0 12px 10px; }
 
 /* ================= СУНДУКИ ================= */
 .chest-grid {
@@ -917,21 +1008,93 @@ main { flex: 1; overflow: hidden; position: relative; }
 /* ================= ХРАМ: КОНЕЧНОСТИ ================= */
 .temple-list { display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 .temple-card {
-  background: linear-gradient(180deg, #241d17, #1a1410);
-  border: 1.5px solid var(--line-soft); border-radius: 10px; padding: 11px 13px;
-  display: flex; flex-direction: column; gap: 7px; flex-shrink: 0;
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(46,37,28,.9), rgba(20,16,12,.97)),
+    radial-gradient(ellipse at 0% 0%, rgba(229,181,79,.07), transparent 60%);
+  border: 1.5px solid var(--line-soft); border-radius: 10px; padding: 10px 12px;
+  display: grid; grid-template-columns: 64px 1fr; gap: 10px;
+  align-items: stretch; flex-shrink: 0;
+  transition: border-color .18s, box-shadow .18s;
+  overflow: hidden;
 }
+/* Левая вертикальная полоса статуса */
+.temple-card::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--temple-accent, #4a3b2a);
+}
+.temple-card.hurt { --temple-accent: #c0392b; border-color: rgba(192,57,43,.45); }
+.temple-card.healthy { --temple-accent: #5aa870; }
 .temple-card.is-dog { border-color: rgba(168,137,94,.45); }
+.temple-card.heal-flash { animation: temple-heal .7s ease-out; }
+@keyframes temple-heal {
+  0%   { box-shadow: 0 0 0 0 rgba(127,209,143,.7), inset 0 0 0 rgba(127,209,143,0); }
+  40%  { box-shadow: 0 0 22px 6px rgba(127,209,143,.55), inset 0 0 26px rgba(127,209,143,.22); }
+  100% { box-shadow: 0 0 0 0 rgba(127,209,143,0), inset 0 0 0 rgba(127,209,143,0); }
+}
+
+/* Портрет гладиатора */
+.tc-portrait {
+  display: flex; align-items: flex-end; justify-content: center;
+  background: radial-gradient(ellipse at 50% 100%, rgba(229,181,79,.1), rgba(10,8,6,.55));
+  border: 1px solid rgba(138,109,63,.35); border-radius: 7px;
+  overflow: hidden; padding-top: 2px;
+}
+.tc-face { display: block; width: 100%; height: auto; filter: drop-shadow(0 3px 6px rgba(0,0,0,.6)); }
+.temple-card.hurt .tc-face { filter: drop-shadow(0 3px 6px rgba(0,0,0,.6)) saturate(.75); }
+.temple-card.healthy .tc-face { filter: drop-shadow(0 0 5px rgba(127,209,143,.35)); }
+
+.tc-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .tc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.tc-name { font-size: 13.5px; font-weight: 800; }
-.tc-hp { font-size: 11.5px; color: var(--muted); }
-.tc-bar { height: 8px; background: #14100d; border-radius: 4px; overflow: hidden; }
-.tc-bar i { display: block; height: 100%; background: linear-gradient(90deg, #8a3a2a, #c0392b, #e5b54f); }
+.tc-name { font-size: 13.5px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
+.tc-badge {
+  font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: .6px;
+  padding: 1px 5px; border-radius: 3px; border: 1px solid;
+}
+.tc-badge.fit  { color: #8fd19e; border-color: rgba(127,209,143,.5); background: rgba(127,209,143,.1); }
+.tc-badge.wound{ color: #ffd166; border-color: rgba(229,181,79,.5); background: rgba(229,181,79,.1); }
+.tc-badge.crit { color: #ff8a7a; border-color: rgba(255,138,122,.55); background: rgba(192,57,43,.14); }
+.tc-badge.dead { color: #b0a090; border-color: rgba(140,120,100,.5); background: rgba(60,50,40,.4); }
+.tc-hp { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tc-hp b { color: var(--text); font-size: 13px; }
+
+/* HP-полоса со встроенным процентом */
+.tc-bar {
+  position: relative; height: 13px; background: #120e0b;
+  border: 1px solid rgba(90,70,48,.5); border-radius: 4px; overflow: hidden;
+}
+.tc-bar i {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, #8a3a2a, #c0392b, #e5b54f);
+  transition: width .45s cubic-bezier(.2,.7,.2,1);
+}
+.tc-bar.fit i   { background: linear-gradient(90deg, #2f6b46, #5aa870, #8fd19e); }
+.tc-bar.wound i { background: linear-gradient(90deg, #8a6a2a, #c9a045, #e5c35f); }
+.tc-bar.crit i  { background: linear-gradient(90deg, #6a1e18, #c0392b, #e0705f); }
+.tc-bar em {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-size: 8.5px; font-weight: 800; font-style: normal; color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,.9); letter-spacing: .3px;
+}
+
 .tc-limbs { display: grid; grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); gap: 5px; }
+
+/* Строка пассивной регенерации */
+.tc-regen {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; color: #9ab8a4;
+  background: linear-gradient(90deg, rgba(90,168,112,.12), rgba(90,168,112,.02));
+  border-left: 2px solid rgba(127,209,143,.55);
+  border-radius: 3px; padding: 3px 7px;
+}
+.tc-regen .tcr-ico { color: #8fd19e; font-size: 11px; animation: regen-pulse 1.8s ease-in-out infinite; }
+.tc-regen b { color: #b6e8c4; font-variant-numeric: tabular-nums; }
+@keyframes regen-pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
 .temple-limb {
   display: flex; align-items: center; gap: 5px;
   background: #17120e; border: 1px solid var(--line-soft); border-radius: 7px;
   padding: 5px 7px; font-size: 10.5px;
+  transition: border-color .14s, background .14s;
 }
 .temple-limb.ok { border-color: rgba(90,168,112,.4); }
 .temple-limb.mid { border-color: rgba(229,181,79,.45); }
@@ -947,6 +1110,29 @@ main { flex: 1; overflow: hidden; position: relative; }
 .temple-limb.low .tl-bar i { background: #ff8a7a; }
 .tl-val { font-size: 9.5px; color: #8a7a68; }
 .tl-cost { font-size: 9.5px; color: #ffd98a; font-weight: 800; }
+
+/* Кнопка лечения */
+.tc-heal {
+  align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: linear-gradient(180deg, #4a2a24, #2a1814);
+  border: 1px solid #8a4a3a; border-radius: 5px;
+  color: #ffd0c8; font-size: 11px; font-weight: 700;
+  padding: 5px 12px; cursor: pointer; transition: .15s;
+}
+.tc-heal b { color: #ffd166; font-variant-numeric: tabular-nums; }
+.tc-heal:hover {
+  background: linear-gradient(180deg, #6a3a2c, #3a2018);
+  border-color: #c0392b; color: #fff;
+  box-shadow: 0 0 12px rgba(192,57,43,.35);
+}
+.tc-heal .tch-ico { font-size: 13px; }
+.tc-heal.ok, .tc-heal:disabled {
+  background: linear-gradient(180deg, #2a3329, #171e17);
+  border-color: rgba(127,209,143,.35); color: #8fd19e;
+  cursor: default; opacity: .8;
+}
+.tc-heal:disabled:hover { box-shadow: none; background: linear-gradient(180deg, #2a3329, #171e17); }
 .panel-gold { font-size: 12.5px; color: var(--muted); }
 .panel-gold b { color: var(--gold); }
 .head-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

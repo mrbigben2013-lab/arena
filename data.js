@@ -212,27 +212,33 @@ const ARMOR_DEFS = {
     ['o_mongol_shield', 'Монгольский щит', 4, 'round', '#6a4a2e', { emblem: 'studs', visStyle: 'mongol' }, 'Плетёный из прутьев, обтянут кожей.']
   ],
   head: [
-    ['h_band', 'Кожаная повязка', 1, 'cap', '#7d5637', {}, 'Хоть что-то для головы.'],
+    ['h_band', 'Кожаная повязка', 1, 'headband', '#7d5637', {}, 'Хоть что-то для головы.'],
     ['h_hood', 'Кожаный капюшон', 1, 'hood', '#7d5637', {}, 'Мягкая кожа, тёплый вид.'],
-    ['h_cap', 'Кожаный шлем', 1, 'cap', '#6b4a2e', {}, 'Плотная кожа с металлическими бляхами.'],
+    ['h_cap', 'Кожаный шлем', 1, 'leathercap', '#6b4a2e', {}, 'Плотная кожа с металлическими бляхами.'],
     ['h_skullcap', 'Черепной колпак', 2, 'cap', '#9aa4ad', {}, 'Простая стальная чаша.'],
     ['h_nasal', 'Норманнский шлем', 2, 'nasal', '#b0bac4', {}, 'Классический железный шлем с наносником.'],
     ['h_kettle', 'Капалин', 2, 'kettle', '#a9b4bf', {}, 'Широкие поля защищают плечи от стрел.'],
-    ['h_spangen', 'Спангенхельм', 3, 'nasal', '#c2ccd6', { trim: '#d9b45c' }, 'Клёпаный каркас из полос.'],
-    ['h_thracian', 'Фракийский шлем', 3, 'murmillo', '#c9a45c', { crest: '#8a2f28' }, 'Гладиаторский гребень.'],
-    ['h_sutton', 'Секуторский шлем', 3, 'murmillo', '#b0bac4', { crest: '#2f4a3a', face: true }, 'Без гребня, с глухим лицом.'],
+    ['h_spangen', 'Спангенхельм', 3, 'spangen', '#c2ccd6', { trim: '#d9b45c' }, 'Клёпаный каркас из полос.'],
+    ['h_thracian', 'Фракийский шлем', 3, 'thracian', '#c9a45c', { crest: '#8a2f28' }, 'Гладиаторский гребень.'],
+    ['h_sutton', 'Секуторский шлем', 3, 'sutton', '#b0bac4', { crest: '#2f4a3a', face: true }, 'Без гребня, с глухим лицом.'],
     ['h_murmillo', 'Шлем мурмиллона', 3, 'murmillo', '#d9b45c', { crest: '#c9402f' }, 'Тяжёлый шлем с решёткой и гребнем.'],
-    ['h_bascinet', 'Бацинет', 4, 'greathelm', '#ccd6e0', {}, 'Острый верх, подвижное забрало.'],
-    ['h_sallet', 'Салад', 4, 'greathelm', '#b9c4cf', {}, 'Немецкая сталь с длинным козырьком.'],
+    ['h_bascinet', 'Бацинет', 4, 'bascinet', '#ccd6e0', {}, 'Острый верх, подвижное забрало.'],
+    ['h_sallet', 'Салад', 4, 'sallet', '#b9c4cf', {}, 'Немецкая сталь с длинным козырьком.'],
     ['h_greathelm', 'Топфхельм', 4, 'greathelm', '#ccd6e0', {}, 'Глухой стальной цилиндр.'],
     ['h_horned', 'Рогатый шлем ярла', 4, 'horned', '#b9c4cf', {}, 'Враги запоминают такой силуэт.'],
     ['h_crown', 'Венец чемпиона', 5, 'crown', '#e5b54f', { def: 6 }, 'Золото на голове не защищает, но пугает.'],
-    ['h_imperial_gold', 'Имперский венец', 5, 'crown', '#f0d070', { def: 8, trim: '#c0392b' }, 'Лавры и золото. Носить — честь.'],
+    ['h_imperial_gold', 'Имперский венец', 5, 'imperialcrown', '#f0d070', { def: 8, trim: '#c0392b' }, 'Лавры и золото. Носить — честь.'],
     // --- Новые школы: Средневековье, Китай, Русь, Монголия ---
-    ['h_knight_bascinet', 'Рыцарский бацинет', 4, 'greathelm', '#c8d4e0', { visStyle: 'medieval', trim: '#c0392b' }, 'Стальной купол с плюмажем.'],
+    ['h_knight_bascinet', 'Рыцарский бацинет', 4, 'bascinet', '#c8d4e0', { visStyle: 'medieval', trim: '#c0392b' }, 'Стальной купол с плюмажем.'],
     ['h_han_cap', 'Ханьский колпак', 4, 'hanhelm', '#8a2f28', { visStyle: 'china', trim: '#e2b65a' }, 'Лаковая шапочка с золотым шипом.'],
     ['h_rus_helm', 'Русский шелом', 4, 'rushelm', '#b8c2cc', { visStyle: 'rus', trim: '#c9a45c' }, 'Высокий купол с бармицей.'],
-    ['h_mongol_helm', 'Монгольский шлем', 4, 'mongolhelm', '#8a7a5a', { visStyle: 'mongol', trim: '#5a4a2e' }, 'Кожа и сталь, меховой обод.']
+    ['h_mongol_helm', 'Монгольский шлем', 4, 'mongolhelm', '#8a7a5a', { visStyle: 'mongol', trim: '#5a4a2e' }, 'Кожа и сталь, меховой обод.'],
+    // --- Новые модели: у каждого свой силуэт ---
+    ['h_turban', 'Тканевая чалма', 2, 'turban', '#c8b48c', {}, 'Многослойная ткань. Держит удар не хуже колпака.'],
+    ['h_brim', 'Шляпа с полями', 2, 'brimhat', '#6a5232', { trim: '#8a6a3a' }, 'Поля прикрывают глаза от солнца и стрел.'],
+    ['h_fur', 'Меховой треух', 3, 'furhat', '#7a5a3a', { trim: '#b8a888' }, 'Тёплый, тяжёлый, с медными накладками.'],
+    ['h_barbute', 'Барбют', 4, 'barbute', '#c0cad6', { trim: '#8a95a0' }, 'Колокол с Т-образным вырезом для лица.'],
+    ['h_kabuto', 'Кабуто', 5, 'kabuto', '#3a3a42', { trim: '#c9a45c' }, 'Лаковые пластины и полумесяц на лбу.']
   ],
   body: [
     ['b_rags', 'Лохмотья', 1, 'rags', '#8a7a66', {}, 'Ткань и дыры.'],
@@ -243,12 +249,12 @@ const ARMOR_DEFS = {
     ['b_leather', 'Клёпаный кожаный доспех', 2, 'leather', '#6b4529', {}, 'Хорошо держит режущие удары, плохо — дробящие.'],
     ['b_scale', 'Чешуйчатый доспех', 3, 'scale', '#9aa6b2', {}, 'Стальные чешуйки на коже. Гибко и надёжно.'],
     ['b_mail', 'Кольчужная рубаха', 3, 'mail', '#98a3ad', {}, 'Тяжёлое плетение из тысяч колец.'],
-    ['b_chain_long', 'Длинная кольчуга', 3, 'chain', '#8a95a0', {}, 'Кольчуга до колен.'],
+    ['b_chain_long', 'Длинная кольчуга', 3, 'chainlong', '#8a95a0', {}, 'Кольчуга до колен.'],
     ['b_brigandine', 'Бригантина', 3, 'brigandine', '#7a5a48', {}, 'Пластины под тканью.'],
     ['b_splint', 'Шинный доспех', 3, 'splint', '#a0aab4', {}, 'Металлические полосы на ремнях.'],
-    ['b_bronze_muscle', 'Бронзовый мускульный', 4, 'bronze', '#c9a45c', {}, 'Анатомические формы из бронзы.'],
+    ['b_bronze_muscle', 'Бронзовый мускульный', 4, 'bronzemuscle', '#c9a45c', {}, 'Анатомические формы из бронзы.'],
     ['b_lorica', 'Лорика сегментата', 4, 'lorica', '#b0bac4', {}, 'Пластины легиона.'],
-    ['b_cuirass', 'Кираса', 4, 'plate', '#c2ccd6', {}, 'Цельная грудь и спина.'],
+    ['b_cuirass', 'Кираса', 4, 'cuirass', '#c2ccd6', {}, 'Цельная грудь и спина.'],
     ['b_lamellar', 'Ламеллярный доспех', 4, 'lamellar', '#b08a4a', {}, 'Пластины, стянутые шнуром.'],
     ['b_plate', 'Кираса центуриона', 5, 'plate', '#d8b455', {}, 'Бронза и сталь. Носивший её не проигрывал.'],
     ['b_dragon', 'Драконья чешуя', 5, 'dragon', '#4a8a6a', {}, 'Чешуя, которой не должно быть.'],
@@ -257,45 +263,65 @@ const ARMOR_DEFS = {
     ['b_knight_plate', 'Рыцарский доспех', 4, 'medieval', '#c0cad6', { trim: '#c0392b' }, 'Сборные латы с наплечниками и нагрудником.'],
     ['b_han_lamellar', 'Ханьский ламелляр', 4, 'china', '#a83a2c', { trim: '#e2b65a' }, 'Красный лак, бронзовые пластины, пояс с драконом.'],
     ['b_rus_kolchuga', 'Русская кольчуга', 4, 'rus', '#9aa8b4', { trim: '#8a2f28' }, 'Плотное плетение с медными вставками.'],
-    ['b_mongol_khatanga', 'Монгольский хатанга', 4, 'mongol', '#8a6a44', { trim: '#c9a45c' }, 'Кожа и сталь, меховой воротник.']
+    ['b_mongol_khatanga', 'Монгольский хатанга', 4, 'mongol', '#8a6a44', { trim: '#c9a45c' }, 'Кожа и сталь, меховой воротник.'],
+    // --- Новые модели: у каждого свой силуэт ---
+    ['b_sleeveless', 'Безрукавка', 1, 'sleeveless', '#7a6a52', {}, 'Кожаный жилет на голое тело.'],
+    ['b_poncho', 'Плащ-накидка', 2, 'poncho', '#5a6a4a', {}, 'Кусок плотной ткани с прорезью для головы.'],
+    ['b_cuirbouilli', 'Варёная кожа', 2, 'cuirbouilli', '#8a5a32', {}, 'Кожа, затвердевшая в кипятке. Как дерево.'],
+    ['b_lamellar_iron', 'Железный ламелляр', 3, 'lamellariron', '#8a95a0', {}, 'Тяжёлые железные пластины в шнуровке.'],
+    ['b_hauberk', 'Хауберк с капюшоном', 3, 'hauberk', '#9aa4ad', {}, 'Кольчуга с рукавами и подшлемником.'],
+    ['b_muscle_iron', 'Железный мускульный', 4, 'muscleiron', '#a8b2bc', {}, 'Кованые мышцы. Пугает и защищает.'],
+    ['b_gothic', 'Готические латы', 5, 'gothic', '#c8d2dc', { trim: '#7a2f28' }, 'Рифлёная сталь с острыми гранями.']
   ],
   arms: [
-    ['a_leather_guard', 'Кожаные наручи', 1, 'wraps', '#7a5a3a', {}, 'Ремни на предплечьях.'],
+    ['a_leather_guard', 'Кожаные наручи', 1, 'leatherguard', '#7a5a3a', {}, 'Ремни на предплечьях.'],
     ['a_wraps', 'Кожаные обмотки', 1, 'wraps', '#8a6244', {}, 'Защищают предплечья от порезов.'],
-    ['a_bronze_bracers', 'Бронзовые наручи', 2, 'bracers', '#b08a4a', {}, 'Тёплая бронза.'],
+    ['a_bronze_bracers', 'Бронзовые наручи', 2, 'bronzebracer', '#b08a4a', {}, 'Тёплая бронза.'],
     ['a_bracers', 'Стальные наручи', 2, 'bracers', '#a9b3bd', {}, 'Тонкие пластины, привычные движения.'],
     ['a_manica', 'Сегментная маника', 2, 'manica', '#b6c0ca', {}, 'Пластины на руке, как у гладиаторов.'],
-    ['a_chain_sleeves', 'Кольчужные рукава', 3, 'chain', '#98a3ad', {}, 'Кольца до локтя.'],
-    ['a_scale_arms', 'Чешуйчатые наручи', 3, 'scale', '#9aa6b2', {}, 'Чешуя на руках.'],
-    ['a_gladiator_manica', 'Гладиаторская маника', 3, 'manica', '#c9a45c', {}, 'С бронзовыми вставками.'],
-    ['a_plate_arms', 'Латные наплечники', 4, 'plate', '#d8b455', {}, 'Тяжёлая защита рук и плеч.'],
-    ['a_iron_vambraces', 'Железные наручи', 4, 'plate', '#b0bac4', {}, 'Просто и надёжно.'],
-    ['a_gold_arms', 'Позолоченные наручи', 5, 'plate', '#e8c65f', {}, 'Роскошь на запястьях.'],
-    ['a_titan_arms', 'Наручи титана', 5, 'plate', '#8a6a4a', {}, 'Слишком велики, но держатся.'],
+    ['a_chain_sleeves', 'Кольчужные рукава', 3, 'chainsleeve', '#98a3ad', {}, 'Кольца до локтя.'],
+    ['a_scale_arms', 'Чешуйчатые наручи', 3, 'scalearm', '#9aa6b2', {}, 'Чешуя на руках.'],
+    ['a_gladiator_manica', 'Гладиаторская маника', 3, 'gladmanica', '#c9a45c', {}, 'С бронзовыми вставками.'],
+    ['a_plate_arms', 'Латные наплечники', 4, 'pauldron', '#d8b455', {}, 'Тяжёлая защита рук и плеч.'],
+    ['a_iron_vambraces', 'Железные наручи', 4, 'vambrace', '#b0bac4', {}, 'Просто и надёжно.'],
+    ['a_gold_arms', 'Позолоченные наручи', 5, 'goldarm', '#e8c65f', {}, 'Роскошь на запястьях.'],
+    ['a_titan_arms', 'Наручи титана', 5, 'titanarm', '#8a6a4a', {}, 'Слишком велики, но держатся.'],
     // --- Новые школы: Средневековье, Китай, Русь, Монголия ---
     ['a_knight_vambraces', 'Рыцарские наручи', 4, 'medieval', '#c0cad6', { trim: '#c0392b' }, 'Стальные створки на всю руку.'],
     ['a_han_sleeves', 'Ханьские рукава', 4, 'china', '#a83a2c', { trim: '#e2b65a' }, 'Лаковая пластинчатая защита предплечий.'],
     ['a_rus_bracers', 'Русские наручи', 4, 'rus', '#9aa8b4', { trim: '#8a2f28' }, 'Кольчуга и медные бляхи.'],
-    ['a_mongol_bracers', 'Монгольские наручи', 4, 'mongol', '#8a6a44', { trim: '#c9a45c' }, 'Кожа, стянутая стальными полосами.']
+    ['a_mongol_bracers', 'Монгольские наручи', 4, 'mongol', '#8a6a44', { trim: '#c9a45c' }, 'Кожа, стянутая стальными полосами.'],
+    // --- Новые модели: у каждого свой силуэт ---
+    ['a_arm_wraps', 'Тканевые обмотки', 1, 'armwraps', '#a89070', {}, 'Полосы ткани в несколько слоёв. Дёшево и не натирает.'],
+    ['a_hide_guards', 'Кожаные щитки', 2, 'hideguard', '#6a4a2c', { trim: '#8a6a3a' }, 'Жёсткая кожа, прошитая по краю.'],
+    ['a_splint_bracers', 'Шинные наручи', 3, 'splintarm', '#a0aab4', { trim: '#7a5a38' }, 'Стальные полосы на ремнях, гнутся с рукой.'],
+    ['a_lamellar_sleeves', 'Ламеллярные рукава', 4, 'lamellararm', '#b08a4a', { trim: '#e2b65a' }, 'Мелкие пластины в шнуровке до локтя.'],
+    ['a_fauld_arms', 'Наручи с оплечьем', 5, 'fauldarm', '#d8c8a8', { trim: '#c9a45c' }, 'Створки с гребнем и золотой насечкой.']
   ],
   legs: [
     ['l_bare_boots', 'Кожаные сапоги', 1, 'boots', '#6b4a2e', {}, 'Мягкая кожа.'],
     ['l_sandals', 'Калиги и обмотки', 1, 'sandals', '#7d5637', {}, 'Лёгкие сандалии легионера.'],
-    ['l_wraps_legs', 'Плотные обмотки', 1, 'wraps', '#8a6a48', {}, 'Ткань и ремни.'],
-    ['l_hide_greaves', 'Кожаные поножи', 2, 'greaves', '#7a5a38', {}, 'Кожа на голенях.'],
+    ['l_wraps_legs', 'Плотные обмотки', 1, 'legwraps', '#8a6a48', {}, 'Ткань и ремни.'],
+    ['l_hide_greaves', 'Кожаные поножи', 2, 'hidegreaves', '#7a5a38', {}, 'Кожа на голенях.'],
     ['l_greaves', 'Железные поножи', 2, 'greaves', '#a2acb6', {}, 'Надёжно закрывают голени.'],
-    ['l_chain_leggings', 'Кольчужные чулки', 3, 'chain', '#98a3ad', {}, 'Кольца до колен.'],
-    ['l_scale_leggings', 'Чешуйчатые поножи', 3, 'scale', '#9aa6b2', {}, 'Чешуя на бёдрах.'],
-    ['l_plate_legs', 'Латные поножи', 4, 'plate', '#c2ccd6', {}, 'Кованые створки. Ходить тяжело.'],
-    ['l_gold_greaves', 'Позолоченные поножи', 4, 'gold', '#e0bc5a', {}, 'Роскошь, которую не стыдно забрызгать кровью.'],
-    ['l_iron_greaves', 'Железные латы ног', 4, 'plate', '#b0bac4', {}, 'Тяжело ходить, зато не больно.'],
-    ['l_imperial_greaves', 'Имперские поножи', 5, 'gold', '#e8c65f', {}, 'Сталь с золотом.'],
-    ['l_titan_greaves', 'Поножи титана', 5, 'gold', '#c9a45c', {}, 'Выдержат удар тарана.'],
+    ['l_chain_leggings', 'Кольчужные чулки', 3, 'chainlegs', '#98a3ad', {}, 'Кольца до колен.'],
+    ['l_scale_leggings', 'Чешуйчатые поножи', 3, 'scalelegs', '#9aa6b2', {}, 'Чешуя на бёдрах.'],
+    ['l_plate_legs', 'Латные поножи', 4, 'platelegs', '#c2ccd6', {}, 'Кованые створки. Ходить тяжело.'],
+    ['l_gold_greaves', 'Позолоченные поножи', 4, 'goldgreaves', '#e0bc5a', {}, 'Роскошь, которую не стыдно забрызгать кровью.'],
+    ['l_iron_greaves', 'Железные латы ног', 4, 'irongreaves', '#b0bac4', {}, 'Тяжело ходить, зато не больно.'],
+    ['l_imperial_greaves', 'Имперские поножи', 5, 'imperialgreaves', '#e8c65f', {}, 'Сталь с золотом.'],
+    ['l_titan_greaves', 'Поножи титана', 5, 'titangreaves', '#c9a45c', {}, 'Выдержат удар тарана.'],
     // --- Новые школы: Средневековье, Китай, Русь, Монголия ---
     ['l_knight_greaves', 'Рыцарские поножи', 4, 'medieval', '#c0cad6', { trim: '#c0392b' }, 'Кованые створки с наколенниками.'],
     ['l_han_leggings', 'Ханьские поножи', 4, 'china', '#a83a2c', { trim: '#e2b65a' }, 'Лак и пластины до колен.'],
     ['l_rus_leggings', 'Русские поножи', 4, 'rus', '#9aa8b4', { trim: '#8a2f28' }, 'Кольчуга и кожаные ремни.'],
-    ['l_mongol_leggings', 'Монгольские поножи', 4, 'mongol', '#8a6a44', { trim: '#c9a45c' }, 'Мягкая кожа со стальными накладками.']
+    ['l_mongol_leggings', 'Монгольские поножи', 4, 'mongol', '#8a6a44', { trim: '#c9a45c' }, 'Мягкая кожа со стальными накладками.'],
+    // --- Новые модели ---
+    ['l_puttees', 'Портянки и лапти', 1, 'puttees', '#8a7452', {}, 'Дёшево и почти не мешает бегать.'],
+    ['l_gaiters', 'Кожаные гетры', 2, 'gaiters', '#5c4228', { trim: '#8a6a3a' }, 'Обхватывают голень ремнями.'],
+    ['l_baggy', 'Шаровары', 2, 'baggy', '#6a5a48', {}, 'Свободные штаны, подвязанные у щиколотки.'],
+    ['l_splint_legs', 'Шинные наголенники', 3, 'splintlegs', '#a0aab4', { trim: '#7a5a38' }, 'Стальные полосы на кожаной основе.'],
+    ['l_samurai', 'Самурайские наголенники', 5, 'samurai', '#3a3a42', { trim: '#c9a45c' }, 'Лаковые пластины, шнурованные золотом.']
   ]
 };
 
@@ -383,12 +409,18 @@ function classAllowsShield() {
 }
 
 // Можно ли положить этот предмет во вторую руку как оружие.
-// Годится одноручный клинок; «парные» наборы — это уже готовый второй клинок.
+// Годится одноручный клинок. «Парный» набор — это уже готовые два клинка:
+// он занимает обе руки сразу (вторая копия кладётся автоматически).
 function canOffhandWeapon(glad, item) {
   if (!item || item.slot !== 'weapon') return false;
   if (item.bothHands) return false;                 // двуручное занимает обе руки
-  if (glad && glad.equip && glad.equip.weapon && glad.equip.weapon.bothHands) return false;
-  if (item.dualPair && !item.offhandOnly) return false; // набор из двух — не «один клинок»
+  if (glad && glad.equip) {
+    const main = glad.equip.weapon;
+    if (main && main.bothHands) return false;
+    // Парный набор уже занял обе руки: второй клинок рисуется в левой
+    // руке автоматически, щит туда не встанет.
+    if (main && main.dualPair) return false;
+  }
   return true;
 }
 
@@ -506,6 +538,30 @@ Object.keys(ARMOR_PROFILE).forEach(slot => {
   });
 });
 
+// ==================== СНАРЯЖЕНИЕ ДЛЯ ПСОВ ====================
+// Псы не носят человеческую броню: у них своя защита — попоны и нагрудники.
+// Требований к характеристикам нет (псы не качают атрибуты), зато цена
+// держится в той же вилке, что и лёгкая броня гладиатора.
+// [id, имя, тир, vis, цвет, броня, цена, описание]
+const DOG_GEAR_DEFS = [
+  ['dg_leather', 'Кожаная попона', 1, 'leather', '#7a5230', 12, 55,
+    'Плотная бычья кожа на спине и боках. Держит клыки и когти.'],
+  ['dg_mail', 'Кольчужная попона', 2, 'mail', '#8d99a4', 26, 125,
+    'Плетение из мелких колец, стянутое ремнями. Пёс почти не замечает веса.'],
+  ['dg_bronze', 'Бронзовый боевой нагрудник', 3, 'bronze', '#b08f43', 44, 215,
+    'Пластины с шипами на груди и боках. Работа псарни для лучших зверей.']
+];
+
+DOG_GEAR_DEFS.forEach(([id, name, tier, vis, color, armor, price, desc]) => {
+  const it = {
+    id, name, slot: 'doggear', cat: 'doggear', tier, vis, color,
+    armor, price, desc, dogOnly: true, gearClass: 'dog'
+  };
+  it.req = null;                       // псам характеристики не нужны
+  it.famePrice = Math.max(1, Math.round(price / 18));
+  ITEMS_DB.push(it);
+});
+
 // Быстрый доступ
 const ITEM_MAP = {};
 ITEMS_DB.forEach(i => { ITEM_MAP[i.id] = i; });
@@ -600,12 +656,13 @@ addBossArmor('ba_legend', 'Латы Легенды Колизея', 5, 'body', '
 const WEAPON_VIS = {};
 ITEMS_DB.filter(i => i.slot === 'weapon').forEach(i => { WEAPON_VIS[i.shape] = i.vis; });
 
-const SLOT_NAMES = { weapon: 'Оружие', offhand: 'Щит', head: 'Голова', body: 'Туловище', arms: 'Руки', legs: 'Ноги' };
-const SLOT_ICONS = { weapon: '🗡️', offhand: '🛡️', head: '🪖', body: '🦺', arms: '🧤', legs: '👢' };
+const SLOT_NAMES = { weapon: 'Оружие', offhand: 'Щит', head: 'Голова', body: 'Туловище', arms: 'Руки', legs: 'Ноги', doggear: 'Попона' };
+const SLOT_ICONS = { weapon: '🗡️', offhand: '🛡️', head: '🪖', body: '🦺', arms: '🧤', legs: '👢', doggear: '🐕' };
 
 const SHOP_TABS = [
   { id: 'weapon', name: 'Оружие', icon: '⚔️' },
-  { id: 'armor',  name: 'Броня',  icon: '🛡️' }
+  { id: 'armor',  name: 'Броня',  icon: '🛡️' },
+  { id: 'dog',    name: 'Псы',    icon: '🐕' }
 ];
 
 const WEAPON_CATS = [
@@ -629,6 +686,11 @@ const ARMOR_CATS = [
   { id: 'body',    name: 'Доспехи', icon: '🦺' },
   { id: 'arms',    name: 'Наручи',  icon: '🧤' },
   { id: 'legs',    name: 'Поножи',  icon: '👢' }
+];
+
+// Защита для псов: у них своя линейка, человеческую броню им не надеть
+const DOG_GEAR_CATS = [
+  { id: 'doggear', name: 'Попоны', icon: '🐕' }
 ];
 
 // ==================== ХАРАКТЕРИСТИКИ ====================
@@ -674,16 +736,38 @@ const HAIR_STYLES = [
   { id: 'dreadlocks', name: 'Дреды' },
   { id: 'topknot',    name: 'Узел' },
   { id: 'shaved',     name: 'Бритый' },
-  { id: 'bald',       name: 'Лысый' }
+  { id: 'bald',       name: 'Лысый' },
+  // --- Новые причёски ---
+  { id: 'crew',       name: 'Ёжик' },
+  { id: 'slick',      name: 'Зачёс назад' },
+  { id: 'parted',     name: 'Пробор' },
+  { id: 'fringe',     name: 'Чёлка' },
+  { id: 'spiky',      name: 'Рваные пряди' },
+  { id: 'halfup',     name: 'Полухвост' },
+  { id: 'twinbraids', name: 'Две косы' },
+  { id: 'afro',       name: 'Афро' },
+  { id: 'wavy',       name: 'Волны' },
+  { id: 'undercut',   name: 'Выбритый висок' }
 ];
 
 const BEARD_STYLES = [
-  { id: 'none',      name: 'Нет' },
-  { id: 'stubble',   name: 'Щетина' },
-  { id: 'full',      name: 'Густая' },
-  { id: 'long',      name: 'Длинная' },
-  { id: 'goatee',    name: 'Козлиная' },
-  { id: 'moustache', name: 'Усы' }
+  { id: 'none',        name: 'Нет' },
+  { id: 'stubble',     name: 'Щетина' },
+  { id: 'full',        name: 'Густая' },
+  { id: 'long',        name: 'Длинная' },
+  { id: 'goatee',      name: 'Козлиная' },
+  { id: 'moustache',   name: 'Усы' },
+  // --- Новые бороды ---
+  { id: 'shortbox',    name: 'Короткая окладистая' },
+  { id: 'verdi',       name: 'Верди' },
+  { id: 'chinstrap',   name: 'По контуру' },
+  { id: 'imperial',    name: 'Имперская' },
+  { id: 'horseshoe',   name: 'Подкова' },
+  { id: 'vandyke',     name: 'Ван Дейк' },
+  { id: 'garibaldi',   name: 'Гарибальди' },
+  { id: 'anchor',      name: 'Якорь' },
+  { id: 'ducktail',    name: 'Утиный хвост' },
+  { id: 'sidewhiskers',name: 'Бакенбарды' }
 ];
 
 const BUILDS = [
@@ -692,6 +776,148 @@ const BUILDS = [
   { id: 'muscular', name: 'Мышцастый' },
   { id: 'heavy',    name: 'Тяжёлый' }
 ];
+
+// ==================== ФОРМЫ ЛИЦА ====================
+// Лицо строится из параметров в долях радиуса головы, поэтому форма
+// не ломается при смене телосложения или пола. Один и тот же набор
+// работает и для героя, и для врагов.
+//   jaw    — ширина нижней челюсти
+//   chin   — длина подбородка (вытянутость лица)
+//   cheek  — выраженность скул
+//   eyeGap — расстояние между глазами
+//   eyeSize— размер глаза
+//   nose   — длина носа
+//   lip    — ширина губ
+//   brow   — толщина и высота брови
+const FACE_STYLES = [
+  { id: 'classic',   name: 'Классическое', jaw: 1.00, chin: 1.00, cheek: 1.00, eyeGap: 1.00, eyeSize: 1.00, nose: 1.00, lip: 1.00, brow: 1.00 },
+  { id: 'square',    name: 'Квадратное',   jaw: 1.22, chin: 0.94, cheek: 1.06, eyeGap: 1.04, eyeSize: 0.96, nose: 0.96, lip: 1.06, brow: 1.14 },
+  { id: 'oval',      name: 'Овальное',     jaw: 0.86, chin: 1.14, cheek: 0.96, eyeGap: 0.98, eyeSize: 1.02, nose: 1.08, lip: 0.96, brow: 0.92 },
+  { id: 'round',     name: 'Круглое',      jaw: 1.10, chin: 0.86, cheek: 1.12, eyeGap: 1.02, eyeSize: 1.06, nose: 0.90, lip: 1.04, brow: 0.94 },
+  { id: 'gaunt',     name: 'Худое',        jaw: 0.84, chin: 1.10, cheek: 1.18, eyeGap: 0.96, eyeSize: 1.00, nose: 1.14, lip: 0.90, brow: 1.04 },
+  { id: 'broad',     name: 'Широкоскулое', jaw: 1.14, chin: 0.98, cheek: 1.24, eyeGap: 1.10, eyeSize: 0.94, nose: 1.04, lip: 1.02, brow: 1.08 },
+  { id: 'pointed',   name: 'Заострённое',  jaw: 0.80, chin: 1.20, cheek: 0.92, eyeGap: 0.96, eyeSize: 1.04, nose: 1.06, lip: 0.92, brow: 0.88 },
+  { id: 'weathered', name: 'Обветренное',  jaw: 1.16, chin: 1.02, cheek: 1.10, eyeGap: 1.06, eyeSize: 0.90, nose: 1.16, lip: 1.08, brow: 1.22 }
+];
+
+const FACE_BY_ID = {};
+FACE_STYLES.forEach(f => { FACE_BY_ID[f.id] = f; });
+
+function faceStyleOf(glad) {
+  return FACE_BY_ID[(glad && glad.faceStyle) || 'classic'] || FACE_BY_ID.classic;
+}
+
+// ==================== НАБОРЫ ЧЕРТ ====================
+// Форма головы — не единственное, что делает лица разными. Даже при
+// одинаковом овале лица человек с тяжёлым нависшим веком, крупным
+// крючковатым носом и косматыми бровями выглядит совсем иначе, чем
+// человек с раскосыми глазами, коротким носом и тонкой дугой брови.
+// Каждый набор — коэффициенты поверх формы лица:
+//   open  — раскрытость века (высота разреза)
+//   tilt  — наклон внешнего угла (положительный — вверх, «кошачий»)
+//   round — округлость глаза (1 — круглый, 0 — узкий миндалевидный)
+//   lid   — тяжесть верхнего века (0 — открытый взгляд, 1 — нависшее)
+//   pupil — размер зрачка
+
+const EYE_SETS = [
+  { id: 'calm',     name: 'Спокойные',    open: 1.00, tilt: 0.00, round: 0.35, lid: 0.25, pupil: 1.00 },
+  { id: 'narrow',   name: 'Прищуренные',  open: 0.74, tilt: -0.18, round: 0.15, lid: 0.62, pupil: 0.94 },
+  { id: 'wide',     name: 'Раскрытые',    open: 1.24, tilt: 0.06, round: 0.72, lid: 0.06, pupil: 1.06 },
+  { id: 'heavy',    name: 'Тяжёлые веки', open: 0.90, tilt: -0.06, round: 0.30, lid: 0.88, pupil: 0.92 },
+  { id: 'almond',   name: 'Миндалевидные',open: 0.92, tilt: 0.26, round: 0.10, lid: 0.34, pupil: 1.00 },
+  { id: 'deep',     name: 'Глубокие',     open: 0.84, tilt: -0.10, round: 0.24, lid: 0.54, pupil: 0.88 },
+  { id: 'hawk',     name: 'Хищные',       open: 0.80, tilt: 0.34, round: 0.08, lid: 0.48, pupil: 0.86 },
+  { id: 'sleepy',   name: 'Сонные',       open: 0.66, tilt: -0.24, round: 0.44, lid: 0.74, pupil: 1.02 },
+  { id: 'kind',     name: 'Добрые',       open: 1.06, tilt: 0.14, round: 0.58, lid: 0.18, pupil: 1.10 },
+  { id: 'stare',    name: 'Немигающий',   open: 1.14, tilt: 0.00, round: 0.30, lid: 0.02, pupil: 0.74 }
+];
+
+//   len    — длина носа
+//   width  — ширина крыльев
+//   bridge — ширина спинки
+//   hook   — горбинка (0 — прямой, 1 — крючковатый)
+//   tip    — опущенность/вздёрнутость кончика
+//   flare  — раздутость ноздрей
+
+const NOSE_SETS = [
+  { id: 'straight', name: 'Прямой',       len: 1.00, width: 1.00, bridge: 1.00, hook: 0.10, tip: 0.00, flare: 1.00 },
+  { id: 'aquiline', name: 'Орлиный',      len: 1.16, width: 0.94, bridge: 1.10, hook: 0.82, tip: 0.24, flare: 0.92 },
+  { id: 'button',   name: 'Курносый',     len: 0.84, width: 1.06, bridge: 0.86, hook: 0.00, tip: -0.42, flare: 1.12 },
+  { id: 'broad',    name: 'Широкий',      len: 1.02, width: 1.28, bridge: 1.16, hook: 0.06, tip: 0.04, flare: 1.30 },
+  { id: 'thin',     name: 'Тонкий',       len: 1.08, width: 0.82, bridge: 0.78, hook: 0.16, tip: 0.06, flare: 0.80 },
+  { id: 'broken',   name: 'С горбинкой',  len: 1.10, width: 1.02, bridge: 1.22, hook: 0.58, tip: 0.16, flare: 1.04 },
+  { id: 'snub',     name: 'Вздёрнутый',   len: 0.90, width: 0.96, bridge: 0.92, hook: 0.00, tip: -0.30, flare: 0.96 },
+  { id: 'heavy',    name: 'Тяжёлый',      len: 1.14, width: 1.18, bridge: 1.08, hook: 0.44, tip: 0.30, flare: 1.20 },
+  { id: 'roman',    name: 'Римский',      len: 1.20, width: 1.06, bridge: 1.02, hook: 0.34, tip: 0.10, flare: 1.08 }
+];
+
+//   thick  — толщина брови
+//   arch   — высота дуги (0 — прямая, 1 — крутая)
+//   inner  — поднятость внутреннего края (гнев/удивление)
+//   outer  — опущенность внешнего края
+//   gap    — расстояние от переносицы
+
+const BROW_SETS = [
+  { id: 'natural', name: 'Естественные', thick: 1.00, arch: 0.40, inner: 0.00, outer: 0.00, gap: 1.00 },
+  { id: 'thick',   name: 'Густые',       thick: 1.48, arch: 0.30, inner: 0.04, outer: -0.04, gap: 0.88 },
+  { id: 'thin',    name: 'Тонкие',       thick: 0.62, arch: 0.56, inner: -0.02, outer: 0.06, gap: 1.06 },
+  { id: 'straight',name: 'Прямые',       thick: 1.06, arch: 0.04, inner: 0.02, outer: -0.02, gap: 0.94 },
+  { id: 'arched',  name: 'Дугой',        thick: 0.86, arch: 0.92, inner: -0.08, outer: 0.14, gap: 1.02 },
+  { id: 'angry',   name: 'Сдвинутые',    thick: 1.24, arch: 0.18, inner: 0.30, outer: -0.16, gap: 0.80 },
+  { id: 'worried', name: 'Домиком',      thick: 0.94, arch: 0.34, inner: -0.26, outer: 0.10, gap: 1.04 },
+  { id: 'bushy',   name: 'Косматые',     thick: 1.72, arch: 0.24, inner: 0.06, outer: -0.08, gap: 0.84 },
+  { id: 'unibrow', name: 'Сросшиеся',    thick: 1.30, arch: 0.10, inner: 0.10, outer: -0.06, gap: 0.30, unibrow: true }
+];
+
+const EYE_BY_ID = {};  EYE_SETS.forEach(s => { EYE_BY_ID[s.id] = s; });
+const NOSE_BY_ID = {}; NOSE_SETS.forEach(s => { NOSE_BY_ID[s.id] = s; });
+const BROW_BY_ID = {}; BROW_SETS.forEach(s => { BROW_BY_ID[s.id] = s; });
+
+//   width  — ширина рта
+//   full   — полнота губ (0 — тонкие нитки, 1 — тяжёлые)
+//   corner — уголки (положительный — вниз, «жёсткий» рот)
+//   tilt   — перекос (асимметрия ухмылки)
+//   philtrum — глубина желобка над верхней губой
+
+const MOUTH_SETS = [
+  { id: 'neutral',  name: 'Обычный',        width: 1.00, full: 0.55, corner: 0.00, tilt: 0.00, philtrum: 1.00 },
+  { id: 'thin',     name: 'Тонкие губы',    width: 1.04, full: 0.18, corner: -0.04, tilt: 0.00, philtrum: 0.92 },
+  { id: 'full',     name: 'Полные губы',    width: 0.96, full: 1.00, corner: 0.02, tilt: 0.00, philtrum: 1.10 },
+  { id: 'wide',     name: 'Широкий рот',    width: 1.22, full: 0.62, corner: -0.02, tilt: 0.00, philtrum: 1.02 },
+  { id: 'small',    name: 'Маленький рот',  width: 0.78, full: 0.66, corner: 0.02, tilt: 0.00, philtrum: 0.94 },
+  { id: 'grim',     name: 'Жёсткий',        width: 1.06, full: 0.34, corner: 0.16, tilt: 0.00, philtrum: 1.06 },
+  { id: 'smirk',    name: 'Ухмылка',        width: 1.02, full: 0.50, corner: -0.10, tilt: 0.14, philtrum: 1.00 },
+  { id: 'scarred',  name: 'Перекошенный',   width: 1.08, full: 0.44, corner: 0.06, tilt: -0.20, philtrum: 1.04 }
+];
+
+const MOUTH_BY_ID = {}; MOUTH_SETS.forEach(s => { MOUTH_BY_ID[s.id] = s; });
+
+function eyeSetOf(glad) {
+  return EYE_BY_ID[(glad && glad.eyeStyle) || 'calm'] || EYE_BY_ID.calm;
+}
+function noseSetOf(glad) {
+  return NOSE_BY_ID[(glad && glad.noseStyle) || 'straight'] || NOSE_BY_ID.straight;
+}
+function browSetOf(glad) {
+  return BROW_BY_ID[(glad && glad.browStyle) || 'natural'] || BROW_BY_ID.natural;
+}
+function mouthSetOf(glad) {
+  return MOUTH_BY_ID[(glad && glad.mouthStyle) || 'neutral'] || MOUTH_BY_ID.neutral;
+}
+
+// Случайный «набор лица»: форма черепа + глаза + нос + брови + рот.
+// Враги и наёмники получают его целиком, поэтому двое бойцов с одинаковым
+// овалом лица всё равно выглядят как разные люди.
+function randomFaceLook() {
+  return {
+    faceStyle: pick(FACE_STYLES).id,
+    eyeStyle: pick(EYE_SETS).id,
+    noseStyle: pick(NOSE_SETS).id,
+    browStyle: pick(BROW_SETS).id,
+    mouthStyle: pick(MOUTH_SETS).id
+  };
+}
+
 
 // ==================== ИМЕНА ====================
 const NAMES_M = ['Крикс', 'Спартак', 'Эномай', 'Ганник', 'Фламма', 'Спикулус', 'Коммод', 'Варрон', 'Тит', 'Кассий', 'Марк', 'Дракс', 'Ульф', 'Бьорн', 'Рагнар', 'Аттикус', 'Гай', 'Секст', 'Отон', 'Тиберий'];
@@ -855,7 +1081,7 @@ const BOSS_LADDER = [
     title: 'Первый страж песка',
     winAt: 5,
     tier: 2,
-    look: { build: 'muscular', skin: '#cf9468', hair: '#2a2118', hairStyle: 'shaved', beard: 'stubble', gender: 'male' },
+    look: { build: 'muscular', skin: '#cf9468', hair: '#2a2118', hairStyle: 'shaved', faceStyle: 'weathered', beard: 'stubble', gender: 'male' },
     aura: '#b8b0a4',
     hp: 300, atk: 74, def: 18, agi: 7,
     equip: { wId: 'bw_ashfang', bId: 'ba_ashplate', hId: 'h_murmillo', aId: 'a_manica', lId: 'l_greaves' },
@@ -871,7 +1097,7 @@ const BOSS_LADDER = [
     title: 'Голос мёртвых',
     winAt: 20,
     tier: 3,
-    look: { build: 'slim', skin: '#b8bcc0', hair: '#e4e2dc', hairStyle: 'bald', beard: 'long', gender: 'male' },
+    look: { build: 'slim', skin: '#b8bcc0', hair: '#e4e2dc', hairStyle: 'bald', faceStyle: 'gaunt', beard: 'long', gender: 'male' },
     aura: '#8a9aa6',
     hp: 380, atk: 84, def: 22, agi: 8,
     equip: { wId: 'bw_gravebell', bId: 'ba_shroud', hId: 'h_hood', aId: 'a_chain_sleeves', lId: 'l_chain_leggings' },
@@ -906,7 +1132,7 @@ const BOSS_LADDER = [
     title: 'Королева вечной зимы',
     winAt: 65,
     tier: 5,
-    look: { build: 'slim', skin: '#f5c9a4', hair: '#e4e2dc', hairStyle: 'braids', beard: 'none', gender: 'female' },
+    look: { build: 'slim', skin: '#f5c9a4', hair: '#e4e2dc', hairStyle: 'braids', faceStyle: 'pointed', beard: 'none', gender: 'female' },
     aura: '#cfe6f2',
     hp: 560, atk: 108, def: 30, agi: 15,
     equip: { wId: 'bw_frost', bId: 'ba_frost', hId: 'h_horned', aId: 'a_plate_arms', lId: 'l_imperial_greaves' },
@@ -924,7 +1150,7 @@ const BOSS_LADDER = [
     title: 'Непобеждённый',
     winAt: 100,
     tier: 5,
-    look: { build: 'muscular', skin: '#e8ab7e', hair: '#c9a45c', hairStyle: 'short', beard: 'full', gender: 'male' },
+    look: { build: 'muscular', skin: '#e8ab7e', hair: '#c9a45c', hairStyle: 'short', faceStyle: 'square', beard: 'full', gender: 'male' },
     aura: '#ffd76a',
     hp: 700, atk: 124, def: 36, agi: 18,
     equip: { wId: 'bw_legend', bId: 'ba_legend', hId: 'h_crown', aId: 'a_gold_arms', lId: 'l_imperial_greaves' },
@@ -1184,6 +1410,35 @@ const COSMETICS = [
   { id: 'hair_ponytail', group: 'Причёска', name: 'Хвост',            fame: 14, kind: 'hair', value: 'ponytail' },
   { id: 'hair_mohawk',   group: 'Причёска', name: 'Ирокез',           fame: 26, kind: 'hair', value: 'mohawk' },
   { id: 'hair_bald',     group: 'Причёска', name: 'Бритая голова',    fame: 6,  kind: 'hair', value: 'bald' },
+  // Новые причёски за славу
+  { id: 'hair_crew',     group: 'Причёска', name: 'Ёжик',             fame: 4,  kind: 'hair', value: 'crew' },
+  { id: 'hair_slick',    group: 'Причёска', name: 'Зачёс назад',      fame: 18, kind: 'hair', value: 'slick' },
+  { id: 'hair_parted',   group: 'Причёска', name: 'Пробор',           fame: 12, kind: 'hair', value: 'parted' },
+  { id: 'hair_fringe',   group: 'Причёска', name: 'Чёлка',            fame: 8,  kind: 'hair', value: 'fringe' },
+  { id: 'hair_spiky',    group: 'Причёска', name: 'Рваные пряди',     fame: 22, kind: 'hair', value: 'spiky' },
+  { id: 'hair_halfup',   group: 'Причёска', name: 'Полухвост',        fame: 16, kind: 'hair', value: 'halfup' },
+  { id: 'hair_twinbraids', group: 'Причёска', name: 'Две косы',       fame: 20, kind: 'hair', value: 'twinbraids' },
+  { id: 'hair_afro',     group: 'Причёска', name: 'Афро',             fame: 28, kind: 'hair', value: 'afro' },
+  { id: 'hair_wavy',     group: 'Причёска', name: 'Волны',            fame: 15, kind: 'hair', value: 'wavy' },
+  { id: 'hair_undercut', group: 'Причёска', name: 'Выбритый висок',   fame: 30, kind: 'hair', value: 'undercut' },
+
+  { id: 'beard_none',    group: 'Борода',   name: 'Нет',              fame: 0,  kind: 'beard', value: 'none' },
+  { id: 'beard_stubble', group: 'Борода',   name: 'Щетина',           fame: 0,  kind: 'beard', value: 'stubble' },
+  { id: 'beard_full',    group: 'Борода',   name: 'Густая',           fame: 6,  kind: 'beard', value: 'full' },
+  { id: 'beard_long',    group: 'Борода',   name: 'Длинная',          fame: 12, kind: 'beard', value: 'long' },
+  { id: 'beard_goatee',  group: 'Борода',   name: 'Козлиная',         fame: 4,  kind: 'beard', value: 'goatee' },
+  { id: 'beard_moustache', group: 'Борода', name: 'Усы',              fame: 4,  kind: 'beard', value: 'moustache' },
+  // Новые бороды за славу
+  { id: 'beard_shortbox', group: 'Борода',  name: 'Окладистая',       fame: 8,  kind: 'beard', value: 'shortbox' },
+  { id: 'beard_verdi',   group: 'Борода',   name: 'Верди',            fame: 16, kind: 'beard', value: 'verdi' },
+  { id: 'beard_chinstrap', group: 'Борода', name: 'По контуру',       fame: 10, kind: 'beard', value: 'chinstrap' },
+  { id: 'beard_imperial', group: 'Борода',  name: 'Имперская',        fame: 18, kind: 'beard', value: 'imperial' },
+  { id: 'beard_horseshoe', group: 'Борода', name: 'Подкова',          fame: 12, kind: 'beard', value: 'horseshoe' },
+  { id: 'beard_vandyke', group: 'Борода',   name: 'Ван Дейк',         fame: 20, kind: 'beard', value: 'vandyke' },
+  { id: 'beard_garibaldi', group: 'Борода', name: 'Гарибальди',       fame: 14, kind: 'beard', value: 'garibaldi' },
+  { id: 'beard_anchor',  group: 'Борода',   name: 'Якорь',            fame: 10, kind: 'beard', value: 'anchor' },
+  { id: 'beard_ducktail', group: 'Борода',  name: 'Утиный хвост',     fame: 22, kind: 'beard', value: 'ducktail' },
+  { id: 'beard_sidewhiskers', group: 'Борода', name: 'Бакенбарды',    fame: 24, kind: 'beard', value: 'sidewhiskers' },
 
   { id: 'tattoo_none',   group: 'Татуировки', name: 'Без татуировок', fame: 0,  kind: 'tattoo', value: 'none' },
   { id: 'tattoo_bands',  group: 'Татуировки', name: 'Кольца на руках',fame: 12, kind: 'tattoo', value: 'bands' },
@@ -1222,7 +1477,7 @@ const WORK_TYPES = {
   fishing: {
     id: 'fishing', name: 'Морская рыбалка', sub: 'Piscatio', icon: '🎣',
     accent: '#5f9ec4',
-    desc: 'Поплавок уходит под воду — подсекайте вовремя.',
+    desc: 'Поплавок уходит под воду — подсекайте, когда метка в зоне.',
     gold: 36, xp: 10,
     need: 3,               // сколько удачных подсечек до улова
     hint: 'Пробел или клик — подсечка'
@@ -1230,7 +1485,7 @@ const WORK_TYPES = {
   hunting: {
     id: 'hunting', name: 'Лесная охота', sub: 'Venatio', icon: '🏹',
     accent: '#8aa85c',
-    desc: 'Зверь выходит из кустов — бейте в нужный миг.',
+    desc: 'Зверь бежит по чаще — стреляйте, когда он в перекрестии.',
     gold: 34, xp: 14,
     need: 3,
     hint: 'Пробел или клик — выстрел'
@@ -1350,7 +1605,7 @@ function makeDog(breed, name) {
     colors: { body: b.body, belly: b.belly, snout: b.snout },
     build: b.build,
     aiRole: 'melee',
-    equip: { weapon: null, offhand: null, head: null, body: null, arms: null, legs: null }
+    equip: { weapon: null, offhand: null, head: null, body: null, arms: null, legs: null, doggear: null }
   };
   resetLimbs(dog);
   return dog;
